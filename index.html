@@ -295,7 +295,7 @@
     }
     .modal-card {
       background: var(--bg-surface); border: 1px solid var(--border); border-radius: 18px;
-      max-width: 460px; width: 100%; padding: 24px; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.28);
+      max-width: 480px; width: 100%; padding: 24px; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.28);
       max-height: 90vh; overflow-y: auto;
     }
     .floating-bar {
@@ -305,7 +305,7 @@
     }
     .toast-stack {
       position: fixed; bottom: 20px; right: 20px; z-index: 50;
-      display: flex; flex-direction: column; gap: 8px; max-width: 360px; width: calc(100% - 40px); pointer-events: none;
+      display: flex; flex-direction: column; gap: 8px; max-width: 390px; width: calc(100% - 40px); pointer-events: none;
     }
 
     @media (min-width: 640px) {
@@ -424,7 +424,7 @@
           <button id="sync-gdrive-now-btn" title="今すぐ双方向同期（他端末の編集を反映）" class="btn badge-brand hidden" style="padding:6px 8px;border:1px solid var(--border);">
             <svg id="sync-gdrive-icon" width="15" height="15" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
           </button>
-          <button id="gdrive-settings-btn" title="Google Drive API 設定（クライアントID・フォルダ名）" class="btn btn-muted" style="padding:6px 8px;">
+          <button id="gdrive-settings-btn" title="Google Drive API 設定・接続診断" class="btn btn-muted" style="padding:6px 8px;">
             ⚙️
           </button>
         </div>
@@ -568,7 +568,7 @@
             <button id="mobile-back-btn" class="btn btn-muted mobile-only" style="padding:5px 8px;">← 一覧</button>
             <button type="button" id="nav-back-note-btn" class="btn btn-surface hidden" style="padding:4px 8px;font-size:11px;" title="リンク元のノートへ戻る">← 戻る</button>
             <span id="save-status-indicator" style="font-size:12px;color:var(--text-muted);display:flex;align-items:center;gap:6px;">
-              <span style="width:8px;height:8px;border-radius:50%;background:var(--brand-500);"></span> HTML保存済み
+              <span style="width:8px;height:8px;border-radius:50%;background:var(--brand-500);"></span> 端末内保存済み
             </span>
           </div>
           <div style="display:flex;align-items:center;gap:4px;">
@@ -643,7 +643,7 @@
   <script>
     /**
      * ==========================================================================
-     * LooseNote Cloud - Google Drive API 直接連携版（PC・スマホ両対応）
+     * LooseNote Cloud - Google Drive API 直接連携版（強化・診断機能付き）
      * ==========================================================================
      */
     const LARGE_FILE_THRESHOLD = 10 * 1024 * 1024;
@@ -684,8 +684,9 @@
       gdriveToken: null,
       gdriveTokenExpiry: 0,
       gdriveRootFolderId: null,
-      gdriveFolderCache: new Map(), // "stack/notebook" -> folderId
-      isGdriveSyncing: false
+      gdriveFolderCache: new Map(), // "parentId/folderName" -> folderId
+      isGdriveSyncing: false,
+      lastSyncError: ''
     };
 
     /* ==========================================================================
@@ -881,17 +882,17 @@
       return body.innerHTML.trim() || '<p></p>';
     }
 
-    function showToast(message, type = 'info') {
+    function showToast(message, type = 'info', durationMs = 4200) {
       const colors = { success: '#16a34a', error: '#dc2626', warning: '#d97706', info: '#1e293b' };
       const toast = document.createElement('div');
-      toast.style.cssText = `pointer-events:auto;padding:11px 14px;border-radius:12px;background:${colors[type] || colors.info};color:#fff;font-size:12px;font-weight:500;box-shadow:0 10px 15px -3px rgba(0,0,0,0.18);opacity:0;transform:translateY(8px);transition:all 0.2s;`;
+      toast.style.cssText = `pointer-events:auto;padding:11px 14px;border-radius:12px;background:${colors[type] || colors.info};color:#fff;font-size:12px;font-weight:500;line-height:1.5;box-shadow:0 10px 15px -3px rgba(0,0,0,0.18);opacity:0;transform:translateY(8px);transition:all 0.2s;white-space:pre-line;`;
       toast.textContent = message;
       el.toastContainer.appendChild(toast);
       requestAnimationFrame(() => { toast.style.opacity = '1'; toast.style.transform = 'translateY(0)'; });
       setTimeout(() => {
         toast.style.opacity = '0';
         setTimeout(() => toast.remove(), 220);
-      }, 3400);
+      }, durationMs);
     }
 
     function openDialog({ title, message = '', bodyHtml = '', leftBtn = null, rightBtns = [], onSetup = null }) {
@@ -952,17 +953,25 @@
 
     function showGdriveSettingsModal() {
       const originUrl = window.location.origin;
+      const lastErrHtml = state.lastSyncError
+        ? `<div style="padding:10px 12px;border-radius:10px;background:#fef2f2;border:1px solid #fecaca;font-size:11px;color:#991b1b;line-height:1.5;">
+            <strong>⚠️ 直近の同期エラー詳細：</strong><br>${escapeHtml(state.lastSyncError)}
+          </div>`
+        : '';
+
       return openDialog({
-        title: '⚙️ Google Drive API 連携設定',
-        message: 'Google Cloud Console で取得した「OAuth クライアントID」を入力すると、PC・スマホのどちらからでも Google ドライブへ直接同期できます。',
+        title: '⚙️ Google Drive API 連携設定・診断',
+        message: 'Google Cloud Console の「OAuth クライアントID」を設定します。同期が失敗する場合は下の「🔍 接続テスト＆原因診断」を押してください。',
         bodyHtml: `
           <div style="display:flex;flex-direction:column;gap:12px;">
+            ${lastErrHtml}
             <div style="padding:10px 12px;border-radius:10px;background:var(--sky-50);border:1px solid var(--border);font-size:11px;color:var(--text-sub);line-height:1.5;">
               <strong>📌 Google Cloud「承認済みの JavaScript 生成元」登録用URL：</strong><br>
               <div style="display:flex;align-items:center;gap:6px;margin-top:4px;">
                 <code style="flex:1;padding:4px 8px;background:var(--bg-surface);border-radius:6px;font-family:monospace;overflow-x:auto;">${escapeHtml(originUrl)}</code>
                 <button type="button" id="dlg-copy-origin-btn" class="btn btn-surface" style="padding:4px 8px;font-size:11px;flex-shrink:0;">コピー</button>
               </div>
+              <span style="display:block;margin-top:4px;color:var(--text-muted);">※末尾の <code>/リポジトリ名/</code> や <code>/</code> は含めないでください。</span>
             </div>
             <div>
               <label class="field-label">Google OAuth クライアントID <span style="color:#ef4444;">*</span></label>
@@ -972,17 +981,84 @@
               <label class="field-label">Googleドライブ上の保存フォルダ名</label>
               <input id="dlg-gd-folder" class="field-input" value="${escapeHtml(state.gdriveFolderName)}" placeholder="LooseNote_Data">
             </div>
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding-top:4px;">
+              <button type="button" id="dlg-run-diag-btn" class="btn btn-surface" style="width:100%;padding:8px 12px;font-weight:600;">
+                🔍 接続テスト＆原因診断を実行
+              </button>
+            </div>
+            <div id="dlg-diag-result" class="hidden" style="padding:10px 12px;border-radius:10px;background:var(--bg-muted);border:1px solid var(--border);font-size:11px;line-height:1.6;white-space:pre-line;"></div>
           </div>`,
         leftBtn: state.gdriveToken ? { label: 'ログアウト', cls: 'btn-danger', value: { action: 'logout' } } : null,
         onSetup(close, body) {
           const idInp = body.querySelector('#dlg-gd-client-id');
+          const folderInp = body.querySelector('#dlg-gd-folder');
           const copyBtn = body.querySelector('#dlg-copy-origin-btn');
+          const diagBtn = body.querySelector('#dlg-run-diag-btn');
+          const diagBox = body.querySelector('#dlg-diag-result');
+
           copyBtn.onclick = async () => {
             try {
               await navigator.clipboard.writeText(originUrl);
               showToast('URLをクリップボードにコピーしました', 'success');
             } catch { showToast(originUrl, 'info'); }
           };
+
+          diagBtn.onclick = async () => {
+            const cid = idInp.value.trim();
+            const fname = sanitizeFilename(folderInp.value.trim() || 'LooseNote_Data');
+            diagBox.classList.remove('hidden');
+            diagBox.style.color = 'var(--text-main)';
+            diagBox.textContent = '⏳ 診断を実行中です...\n';
+
+            const logs = [];
+            const appendLog = (line) => { logs.push(line); diagBox.textContent = logs.join('\n'); };
+
+            // 1. クライアントID形式チェック
+            if (!cid) {
+              appendLog('❌ [1/4] クライアントIDが空欄です。');
+              return;
+            }
+            if (!cid.endsWith('.apps.googleusercontent.com')) {
+              appendLog('⚠️ [1/4] クライアントIDの末尾が .apps.googleusercontent.com ではありません。クライアントシークレットと間違えていないか確認してください。');
+            } else {
+              appendLog('✅ [1/4] クライアントIDの形式: OK');
+            }
+
+            // 2. Google認証スクリプト読込チェック
+            try {
+              await loadGoogleIdentityScript();
+              appendLog('✅ [2/4] Google認証ライブラリ読込: OK');
+            } catch (e) {
+              appendLog(`❌ [2/4] Google認証ライブラリ読込失敗: ${e.message}`);
+              return;
+            }
+
+            // 3. OAuthトークン＆スコープ許可チェック
+            state.gdriveClientId = cid;
+            state.gdriveFolderName = fname;
+            localStorage.setItem(LS_CLIENT_ID_KEY, cid);
+            localStorage.setItem(LS_FOLDER_NAME_KEY, fname);
+
+            try {
+              appendLog('⏳ [3/4] Googleログイン＆権限確認中（ポップアップで許可してください）...');
+              await requestGoogleAccessToken('');
+              appendLog('✅ [3/4] Googleログイン＆drive.file権限許可: OK');
+            } catch (e) {
+              appendLog(`❌ [3/4] ログイン・権限エラー:\n   → ${e.message}`);
+              return;
+            }
+
+            // 4. Google Drive API 疎通＆フォルダアクセスチェック
+            try {
+              appendLog(`⏳ [4/4] Googleドライブ上の「${fname}」フォルダへアクセス確認中...`);
+              const fid = await getOrCreateDriveFolder(fname, 'root');
+              appendLog(`✅ [4/4] Google Drive API 疎通＆フォルダ確認: OK (ID: ${fid.slice(0, 10)}...)`);
+              appendLog('\n🎉 すべてのチェックに合格しました！「保存して接続」を押して同期できます。');
+            } catch (e) {
+              appendLog(`❌ [4/4] Google Drive API エラー:\n   → ${e.message}`);
+            }
+          };
+
           setTimeout(() => idInp.focus(), 30);
         },
         rightBtns: [
@@ -1400,16 +1476,17 @@ ${note.content || '<p></p>'}
         createdAt, updatedAt,
         filename: ensureHtmlFilename(title, id, filename),
         gdriveFileId: gdriveFileId || '',
+        needsSync: false,
         size: new Blob([htmlString]).size
       };
     }
 
     /* ==========================================================================
-       4. IndexedDB ローカルキャッシュ & Google Drive REST API 直接連携
+       4. IndexedDB ローカルキャッシュ & Google Drive REST API 直接連携（強化版）
        ========================================================================== */
     const DB_NAME = 'LooseNoteCloudDB';
     let dbPromise = null;
-    let driveWriteQueue = Promise.resolve();
+    let driveTaskQueue = Promise.resolve();
     let gisScriptPromise = null;
 
     function openDB() {
@@ -1472,6 +1549,46 @@ ${note.content || '<p></p>'}
       } catch { return { notes: [], notebooks: [], initialized: false }; }
     }
 
+    function isGdriveConnected() {
+      return Boolean(state.gdriveToken && Date.now() < state.gdriveTokenExpiry);
+    }
+
+    // Google Drive API のエラーレスポンスを人間が理解できる原因メッセージに変換
+    function parseGdriveApiError(status, rawText) {
+      let reason = '';
+      let apiMsg = '';
+      try {
+        const parsed = JSON.parse(rawText);
+        apiMsg = parsed?.error?.message || '';
+        reason = parsed?.error?.errors?.[0]?.reason || '';
+      } catch {
+        apiMsg = (rawText || '').slice(0, 140);
+      }
+
+      if (status === 401) {
+        return 'Googleログインの有効期限が切れました。「Googleドライブに接続」を押して再ログインしてください。';
+      }
+      if (status === 403) {
+        if (reason === 'accessNotConfigured' || /has not been used in project|is disabled/i.test(apiMsg)) {
+          return 'Google Cloud Console で「Google Drive API」が有効化されていません。APIライブラリから有効にしてください。';
+        }
+        if (reason === 'insufficientPermissions' || reason === 'insufficientScopes' || /insufficient/i.test(apiMsg)) {
+          return 'Googleドライブへのアクセス権限が不足しています。「Googleドライブに接続」を押し直し、ログイン後の許可画面で必ず「LooseNote で作成した特定の Google ドライブ ファイル〜」のチェックボックスをオンにして「続行」を押してください。';
+        }
+        if (reason === 'rateLimitExceeded' || reason === 'userRateLimitExceeded') {
+          return 'Google Drive API のアクセス上限（レート制限）に達しました。数十秒待ってから再同期してください。';
+        }
+        if (reason === 'storageQuotaExceeded') {
+          return 'Googleドライブの空き容量が不足しています。';
+        }
+        return `アクセス拒否 (403): ${apiMsg || 'OAuth同意画面のテストユーザー設定や権限を確認してください。'}`;
+      }
+      if (status === 404) {
+        return 'Googleドライブ上の対象フォルダまたはファイルが見つかりません（404）。';
+      }
+      return `Google Drive API エラー (${status}): ${apiMsg || '通信に失敗しました'}`;
+    }
+
     // Google Identity Services (GIS) スクリプトの動的読み込み
     function loadGoogleIdentityScript() {
       if (window.google?.accounts?.oauth2) return Promise.resolve();
@@ -1481,10 +1598,16 @@ ${note.content || '<p></p>'}
           script.src = 'https://accounts.google.com/gsi/client';
           script.async = true;
           script.defer = true;
-          script.onload = resolve;
+          script.onload = () => {
+            if (window.google?.accounts?.oauth2) resolve();
+            else {
+              gisScriptPromise = null;
+              reject(new Error('Google認証スクリプトの初期化に失敗しました'));
+            }
+          };
           script.onerror = () => {
             gisScriptPromise = null;
-            reject(new Error('Google認証ライブラリの読み込みに失敗しました（ネット接続を確認してください）'));
+            reject(new Error('Google認証ライブラリの読み込みに失敗しました（ネット接続や広告ブロッカーを確認してください）'));
           };
           document.head.appendChild(script);
         });
@@ -1493,7 +1616,9 @@ ${note.content || '<p></p>'}
     }
 
     function updateGdriveStatusUI() {
-      const connected = Boolean(state.gdriveToken && Date.now() < state.gdriveTokenExpiry);
+      const connected = isGdriveConnected();
+      const unsyncedCount = state.notes.filter(n => n.needsSync || !n.gdriveFileId).length;
+
       if (connected) {
         el.storageBadge.textContent = 'Googleドライブ同期中';
         el.storageBadge.className = 'badge badge-brand';
@@ -1501,8 +1626,8 @@ ${note.content || '<p></p>'}
         el.connectGdriveBtnText.textContent = '同期中（再認証）';
         el.syncGdriveNowBtn.classList.remove('hidden');
       } else if (state.gdriveClientId) {
-        el.storageBadge.textContent = '未ログイン';
-        el.storageBadge.className = 'badge badge-sky';
+        el.storageBadge.textContent = unsyncedCount > 0 ? `未ログイン（未送信${unsyncedCount}件）` : '未ログイン';
+        el.storageBadge.className = unsyncedCount > 0 ? 'badge badge-amber' : 'badge badge-sky';
         el.storageFolderName.textContent = `☁️ ${state.gdriveFolderName}（接続待機）`;
         el.connectGdriveBtnText.textContent = 'Googleドライブに接続';
         el.syncGdriveNowBtn.classList.add('hidden');
@@ -1515,57 +1640,110 @@ ${note.content || '<p></p>'}
       }
     }
 
-    // OAuth アクセストークンの取得（prompt: '' または 'consent'）
+    // OAuth アクセストークンの取得（error_callback とスコープ検証を完備）
     async function requestGoogleAccessToken(promptMode = '') {
-      if (!state.gdriveClientId) throw new Error('NO_CLIENT_ID');
+      if (!state.gdriveClientId) throw new Error('OAuth クライアントIDが設定されていません');
       await loadGoogleIdentityScript();
+
       return new Promise((resolve, reject) => {
+        let settled = false;
+        const finishError = (msg) => {
+          if (settled) return;
+          settled = true;
+          reject(new Error(msg));
+        };
+
         const tokenClient = window.google.accounts.oauth2.initTokenClient({
           client_id: state.gdriveClientId,
           scope: GDRIVE_SCOPE,
-          callback: (resp) => {
-            if (resp.error) {
-              reject(new Error(resp.error_description || resp.error));
+          error_callback: (err) => {
+            if (err?.type === 'popup_failed_to_open') {
+              finishError('ログイン用ポップアップがブラウザにブロックされました。ポップアップを許可して再試行してください。');
+            } else if (err?.type === 'popup_closed') {
+              finishError('Googleログイン画面が途中で閉じられました。');
             } else {
-              state.gdriveToken = resp.access_token;
-              state.gdriveTokenExpiry = Date.now() + (Number(resp.expires_in || 3500) - 60) * 1000;
-              updateGdriveStatusUI();
-              resolve(resp.access_token);
+              finishError(`Google認証エラー: ${err?.message || err?.type || '不明なエラー'}`);
             }
+          },
+          callback: (resp) => {
+            if (settled) return;
+            if (resp.error) {
+              finishError(resp.error_description || resp.error);
+              return;
+            }
+            // ★重要：ユーザーが許可画面のチェックボックスをオンにしたかを必ず検証する
+            const hasScope = window.google.accounts.oauth2.hasGrantedAllScopes(resp, GDRIVE_SCOPE);
+            if (!hasScope) {
+              try { window.google.accounts.oauth2.revoke(resp.access_token, () => {}); } catch {}
+              finishError('Googleドライブのアクセス許可チェックボックスがオンになっていませんでした。もう一度接続し、許可画面のチェックボックスにチェックを入れて「続行」を押してください。');
+              return;
+            }
+            settled = true;
+            state.gdriveToken = resp.access_token;
+            state.gdriveTokenExpiry = Date.now() + (Number(resp.expires_in || 3500) - 90) * 1000;
+            state.lastSyncError = '';
+            updateGdriveStatusUI();
+            resolve(resp.access_token);
           }
         });
-        tokenClient.requestAccessToken({ prompt: promptMode });
+
+        try {
+          tokenClient.requestAccessToken({ prompt: promptMode });
+        } catch (e) {
+          finishError(e?.message || 'Google認証リクエストの開始に失敗しました');
+        }
       });
     }
 
-    async function ensureValidGdriveToken(interactive = false) {
-      if (state.gdriveToken && Date.now() < state.gdriveTokenExpiry) return state.gdriveToken;
-      if (!state.gdriveClientId) return null;
-      try {
-        return await requestGoogleAccessToken(interactive ? '' : 'none');
-      } catch {
+    // リトライ・タイムアウト・詳細エラー解析付きの Google Drive API フェッチ
+    async function gdriveFetch(url, options = {}, retries = 2) {
+      if (!isGdriveConnected()) {
         state.gdriveToken = null;
         updateGdriveStatusUI();
-        return null;
+        throw new Error('Googleログインの有効期限が切れました。「Googleドライブに接続」を押して再ログインしてください。');
       }
-    }
 
-    async function gdriveFetch(url, options = {}) {
-      const token = await ensureValidGdriveToken(false);
-      if (!token) throw new Error('AUTH_EXPIRED');
-      const headers = new Headers(options.headers || {});
-      headers.set('Authorization', `Bearer ${token}`);
-      const res = await fetch(url, { ...options, headers });
-      if (res.status === 401) {
-        state.gdriveToken = null;
-        updateGdriveStatusUI();
-        throw new Error('AUTH_EXPIRED');
+      for (let attempt = 0; attempt <= retries; attempt++) {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 30000);
+
+        try {
+          const headers = new Headers(options.headers || {});
+          headers.set('Authorization', `Bearer ${state.gdriveToken}`);
+          const res = await fetch(url, { ...options, headers, signal: controller.signal });
+          clearTimeout(timer);
+
+          if (res.status === 401) {
+            state.gdriveToken = null;
+            state.gdriveTokenExpiry = 0;
+            updateGdriveStatusUI();
+            throw new Error(parseGdriveApiError(401, ''));
+          }
+
+          if ((res.status === 429 || res.status >= 500) && attempt < retries) {
+            await new Promise(r => setTimeout(r, 800 * Math.pow(2, attempt)));
+            continue;
+          }
+
+          if (!res.ok) {
+            const errText = await res.text().catch(() => '');
+            throw new Error(parseGdriveApiError(res.status, errText));
+          }
+
+          return res;
+        } catch (err) {
+          clearTimeout(timer);
+          if (err.name === 'AbortError') {
+            if (attempt < retries) continue;
+            throw new Error('Googleドライブとの通信がタイムアウトしました（回線状況を確認してください）。');
+          }
+          if (attempt < retries && !err.message.includes('Google') && !err.message.includes('アクセス')) {
+            await new Promise(r => setTimeout(r, 800 * Math.pow(2, attempt)));
+            continue;
+          }
+          throw err;
+        }
       }
-      if (!res.ok) {
-        const errText = await res.text().catch(() => '');
-        throw new Error(`Google Drive API エラー (${res.status}): ${errText.slice(0, 140)}`);
-      }
-      return res;
     }
 
     // 指定した親フォルダ直下で名前が一致するフォルダを取得または作成
@@ -1617,97 +1795,127 @@ ${note.content || '<p></p>'}
       return currentParent;
     }
 
-    function enqueueDriveTask(taskFn) {
-      driveWriteQueue = driveWriteQueue.then(taskFn).catch(err => {
-        if (err.message === 'AUTH_EXPIRED') {
-          showToast('Googleドライブの認証期限が切れました。「Googleドライブに接続」を押して再認証してください', 'warning');
-        } else {
-          console.error('Google Drive 同期エラー:', err);
-          showToast('Googleドライブへの保存に失敗しました（端末内には保存済みです）', 'error');
+    // すべてのGoogle Drive操作を直列実行して競合を防ぐ共通キュー
+    function enqueueDriveTask(taskFn, silentOnError = false) {
+      const next = driveTaskQueue.then(taskFn).catch(err => {
+        state.lastSyncError = err.message || '不明な同期エラー';
+        updateGdriveStatusUI();
+        console.error('Google Drive 同期エラー:', err);
+        if (!silentOnError) {
+          showToast(`同期エラー: ${state.lastSyncError}`, 'error', 6500);
         }
       });
-      return driveWriteQueue;
+      driveTaskQueue = next;
+      return next;
     }
 
-    // 1ノートを Google Drive 上へ新規作成または上書き更新（親フォルダ移動にも対応）
-    function uploadNoteToGoogleDrive(note) {
-      if (!state.gdriveToken || Date.now() >= state.gdriveTokenExpiry) return Promise.resolve();
+    // 1ノートを Google Drive 上へ新規作成または上書き更新（キュー内から呼ばれる実体）
+    async function performSingleNoteUpload(note) {
+      if (!isGdriveConnected()) {
+        note.needsSync = true;
+        await saveSingleNoteToDB(note);
+        updateGdriveStatusUI();
+        return;
+      }
+
       const snapshot = { ...note };
+      const parentId = await resolveTargetDriveParentId(snapshot);
+      const filename = ensureHtmlFilename(snapshot.title, snapshot.id, snapshot.filename);
+      note.filename = filename;
+      const htmlContent = serializeNoteToHTML({ ...snapshot, filename });
+      note.size = new Blob([htmlContent]).size;
 
-      return enqueueDriveTask(async () => {
-        const parentId = await resolveTargetDriveParentId(snapshot);
-        const filename = ensureHtmlFilename(snapshot.title, snapshot.id, snapshot.filename);
-        note.filename = filename;
-        const htmlContent = serializeNoteToHTML({ ...snapshot, filename });
-        note.size = new Blob([htmlContent]).size;
+      const boundary = 'loosenote_boundary_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+      const metadata = { name: filename, mimeType: 'text/html' };
 
-        const boundary = 'loosenote_boundary_' + Date.now().toString(36);
-        const metadata = { name: filename, mimeType: 'text/html' };
-
-        if (snapshot.gdriveFileId) {
-          // 既存ファイルの親フォルダを確認し、必要なら移動
-          let moveQuery = '';
-          try {
-            const infoRes = await gdriveFetch(`https://www.googleapis.com/drive/v3/files/${snapshot.gdriveFileId}?fields=parents,trashed`);
-            const info = await infoRes.json();
-            if (info.trashed) throw new Error('FILE_TRASHED');
-            const oldParents = (info.parents || []).filter(p => p !== parentId);
-            if (!(info.parents || []).includes(parentId)) {
-              moveQuery = `&addParents=${encodeURIComponent(parentId)}${oldParents.length ? `&removeParents=${encodeURIComponent(oldParents.join(','))}` : ''}`;
-            }
-          } catch {
-            // ファイルがDrive側で消えていた場合は新規作成へフォールバック
-            note.gdriveFileId = '';
-            snapshot.gdriveFileId = '';
+      if (snapshot.gdriveFileId) {
+        let moveQuery = '';
+        try {
+          const infoRes = await gdriveFetch(`https://www.googleapis.com/drive/v3/files/${snapshot.gdriveFileId}?fields=parents,trashed`);
+          const info = await infoRes.json();
+          if (info.trashed) throw new Error('FILE_TRASHED');
+          const oldParents = (info.parents || []).filter(p => p !== parentId);
+          if (!(info.parents || []).includes(parentId)) {
+            moveQuery = `&addParents=${encodeURIComponent(parentId)}${oldParents.length ? `&removeParents=${encodeURIComponent(oldParents.join(','))}` : ''}`;
           }
+        } catch (e) {
+          if (e.message.includes('Googleログイン')) throw e;
+          note.gdriveFileId = '';
+          snapshot.gdriveFileId = '';
         }
-
-        if (!snapshot.gdriveFileId) {
-          metadata.parents = [parentId];
-        }
-
-        const multipartBody =
-          `--${boundary}\r\n` +
-          `Content-Type: application/json; charset=UTF-8\r\n\r\n` +
-          `${JSON.stringify(metadata)}\r\n` +
-          `--${boundary}\r\n` +
-          `Content-Type: text/html; charset=UTF-8\r\n\r\n` +
-          `${htmlContent}\r\n` +
-          `--${boundary}--`;
 
         if (snapshot.gdriveFileId) {
+          const multipartBlob = new Blob([
+            `--${boundary}\r\n` +
+            `Content-Type: application/json; charset=UTF-8\r\n\r\n` +
+            `${JSON.stringify(metadata)}\r\n` +
+            `--${boundary}\r\n` +
+            `Content-Type: text/html; charset=UTF-8\r\n\r\n` +
+            `${htmlContent}\r\n` +
+            `--${boundary}--`
+          ], { type: `multipart/related; boundary=${boundary}` });
+
           const res = await gdriveFetch(
             `https://www.googleapis.com/upload/drive/v3/files/${snapshot.gdriveFileId}?uploadType=multipart&fields=id${moveQuery}`,
             {
               method: 'PATCH',
               headers: { 'Content-Type': `multipart/related; boundary=${boundary}` },
-              body: multipartBody
+              body: multipartBlob
             }
           );
           const updated = await res.json();
           note.gdriveFileId = updated.id;
-        } else {
-          const res = await gdriveFetch(
-            'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id',
-            {
-              method: 'POST',
-              headers: { 'Content-Type': `multipart/related; boundary=${boundary}` },
-              body: multipartBody
-            }
-          );
-          const created = await res.json();
-          note.gdriveFileId = created.id;
+          note.needsSync = false;
+          state.lastSyncError = '';
+          await saveSingleNoteToDB(note);
+          return;
         }
-        await saveSingleNoteToDB(note);
-      });
+      }
+
+      // 新規作成（POST）
+      metadata.parents = [parentId];
+      const multipartBlob = new Blob([
+        `--${boundary}\r\n` +
+        `Content-Type: application/json; charset=UTF-8\r\n\r\n` +
+        `${JSON.stringify(metadata)}\r\n` +
+        `--${boundary}\r\n` +
+        `Content-Type: text/html; charset=UTF-8\r\n\r\n` +
+        `${htmlContent}\r\n` +
+        `--${boundary}--`
+      ], { type: `multipart/related; boundary=${boundary}` });
+
+      const res = await gdriveFetch(
+        'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': `multipart/related; boundary=${boundary}` },
+          body: multipartBlob
+        }
+      );
+      const created = await res.json();
+      note.gdriveFileId = created.id;
+      note.needsSync = false;
+      state.lastSyncError = '';
+      await saveSingleNoteToDB(note);
+    }
+
+    function uploadNoteToGoogleDrive(note) {
+      note.needsSync = true;
+      if (!isGdriveConnected()) {
+        updateGdriveStatusUI();
+        return Promise.resolve();
+      }
+      return enqueueDriveTask(() => performSingleNoteUpload(note));
     }
 
     function deleteNoteFromGoogleDrive(gdriveFileId) {
-      if (!gdriveFileId || !state.gdriveToken || Date.now() >= state.gdriveTokenExpiry) return Promise.resolve();
+      if (!gdriveFileId || !isGdriveConnected()) return Promise.resolve();
       return enqueueDriveTask(async () => {
         try {
           await gdriveFetch(`https://www.googleapis.com/drive/v3/files/${gdriveFileId}`, { method: 'DELETE' });
-        } catch {}
+        } catch (e) {
+          if (!e.message.includes('404')) throw e;
+        }
       });
     }
 
@@ -1741,101 +1949,111 @@ ${note.content || '<p></p>'}
       return htmlFiles;
     }
 
-    // PC・スマホ間の双方向同期処理
-    async function syncWithGoogleDrive(isManual = false) {
-      if (state.isGdriveSyncing) return;
-      const token = await ensureValidGdriveToken(false);
-      if (!token) return;
+    // PC・スマホ間の双方向同期処理（直列キュー経由で安全に実行）
+    function syncWithGoogleDrive(isManual = false) {
+      if (state.isGdriveSyncing) return Promise.resolve();
+      if (!isGdriveConnected()) {
+        if (isManual) showToast('Googleドライブに未接続です。「Googleドライブに接続」を押してください', 'warning');
+        return Promise.resolve();
+      }
 
-      state.isGdriveSyncing = true;
-      el.syncGdriveIcon?.classList.add('animate-spin');
+      return enqueueDriveTask(async () => {
+        state.isGdriveSyncing = true;
+        el.syncGdriveIcon?.classList.add('animate-spin');
 
-      try {
-        await flushPendingAutoSave();
-        state.gdriveFolderCache.clear();
-        state.gdriveRootFolderId = await getOrCreateDriveFolder(state.gdriveFolderName || 'LooseNote_Data', 'root');
-
-        const remoteFiles = await scanDriveHtmlFilesRecursively(state.gdriveRootFolderId);
-        const remoteById = new Map(remoteFiles.map(f => [f.id, f]));
-        const localByDriveId = new Map(state.notes.filter(n => n.gdriveFileId).map(n => [n.gdriveFileId, n]));
-
-        let downloadedCount = 0;
-        let uploadedCount = 0;
-        let deletedCount = 0;
-
-        // 1. 他端末で完全削除されたノートの反映（以前はDriveに紐づいていたがDrive上から消えているもの）
-        state.notes = state.notes.filter(n => {
-          if (n.gdriveFileId && !remoteById.has(n.gdriveFileId)) {
-            deletedCount++;
-            return false;
+        try {
+          if (state.saveTimeout && state.pendingSaveNoteId) {
+            clearTimeout(state.saveTimeout);
+            const pendingNote = state.notes.find(n => n.id === state.pendingSaveNoteId);
+            state.saveTimeout = null;
+            state.pendingSaveNoteId = null;
+            if (pendingNote) await performSingleNoteUpload(pendingNote);
           }
-          return true;
-        });
 
-        // 2. Drive上のファイルを取り込み・更新比較
-        for (const rf of remoteFiles) {
-          const localMatch = localByDriveId.get(rf.id);
-          if (!localMatch) {
-            // 新規リモートファイル → ダウンロードして追加（ID重複チェック付き）
-            const fileRes = await gdriveFetch(`https://www.googleapis.com/drive/v3/files/${rf.id}?alt=media`);
-            const htmlText = await fileRes.text();
-            const parsed = parseHTMLToNote(htmlText, rf.name, rf.folderParts, rf.id);
-            const sameNoteIdx = state.notes.findIndex(n => n.id === parsed.id);
-            if (sameNoteIdx !== -1) {
-              if (new Date(parsed.updatedAt) >= new Date(state.notes[sameNoteIdx].updatedAt)) {
-                state.notes[sameNoteIdx] = parsed;
-              } else {
-                state.notes[sameNoteIdx].gdriveFileId = rf.id;
-                await uploadNoteToGoogleDrive(state.notes[sameNoteIdx]);
-                uploadedCount++;
-              }
-            } else {
-              state.notes.push(parsed);
+          state.gdriveFolderCache.clear();
+          state.gdriveRootFolderId = await getOrCreateDriveFolder(state.gdriveFolderName || 'LooseNote_Data', 'root');
+
+          const remoteFiles = await scanDriveHtmlFilesRecursively(state.gdriveRootFolderId);
+          const remoteById = new Map(remoteFiles.map(f => [f.id, f]));
+          const localByDriveId = new Map(state.notes.filter(n => n.gdriveFileId).map(n => [n.gdriveFileId, n]));
+
+          let downloadedCount = 0;
+          let uploadedCount = 0;
+          let deletedCount = 0;
+
+          // 1. 他端末で完全削除されたノートの反映（未送信フラグがないもののみ）
+          state.notes = state.notes.filter(n => {
+            if (n.gdriveFileId && !remoteById.has(n.gdriveFileId) && !n.needsSync) {
+              deletedCount++;
+              return false;
             }
-            downloadedCount++;
-          } else {
-            // 両方に存在 → 更新日時を比較（3秒以上の差があれば新しい方を採用）
-            const remoteMod = new Date(rf.modifiedTime).getTime();
-            const localMod = new Date(localMatch.updatedAt).getTime();
-            if (remoteMod - localMod > 3000) {
+            return true;
+          });
+
+          // 2. Drive上のファイルを取り込み・更新比較
+          for (const rf of remoteFiles) {
+            const localMatch = localByDriveId.get(rf.id);
+            if (!localMatch) {
               const fileRes = await gdriveFetch(`https://www.googleapis.com/drive/v3/files/${rf.id}?alt=media`);
               const htmlText = await fileRes.text();
               const parsed = parseHTMLToNote(htmlText, rf.name, rf.folderParts, rf.id);
-              const idx = state.notes.findIndex(n => n.id === localMatch.id);
-              if (idx !== -1) state.notes[idx] = parsed;
-              downloadedCount++;
-            } else if (localMod - remoteMod > 3000) {
-              await uploadNoteToGoogleDrive(localMatch);
+              const sameNoteIdx = state.notes.findIndex(n => n.id === parsed.id);
+
+              if (sameNoteIdx !== -1) {
+                if (new Date(parsed.updatedAt) >= new Date(state.notes[sameNoteIdx].updatedAt) && !state.notes[sameNoteIdx].needsSync) {
+                  state.notes[sameNoteIdx] = parsed;
+                  downloadedCount++;
+                } else {
+                  state.notes[sameNoteIdx].gdriveFileId = rf.id;
+                  await performSingleNoteUpload(state.notes[sameNoteIdx]);
+                  uploadedCount++;
+                }
+              } else {
+                state.notes.push(parsed);
+                downloadedCount++;
+              }
+            } else {
+              const remoteMod = new Date(rf.modifiedTime).getTime();
+              const localMod = new Date(localMatch.updatedAt).getTime();
+              if (localMatch.needsSync || localMod - remoteMod > 3000) {
+                await performSingleNoteUpload(localMatch);
+                uploadedCount++;
+              } else if (remoteMod - localMod > 3000) {
+                const fileRes = await gdriveFetch(`https://www.googleapis.com/drive/v3/files/${rf.id}?alt=media`);
+                const htmlText = await fileRes.text();
+                const parsed = parseHTMLToNote(htmlText, rf.name, rf.folderParts, rf.id);
+                const idx = state.notes.findIndex(n => n.id === localMatch.id);
+                if (idx !== -1) state.notes[idx] = parsed;
+                downloadedCount++;
+              }
+            }
+          }
+
+          // 3. まだGoogle Driveへ未アップロードのローカルノートをすべて送信
+          for (const note of state.notes) {
+            if (!note.gdriveFileId || note.needsSync) {
+              await performSingleNoteUpload(note);
               uploadedCount++;
             }
           }
-        }
 
-        // 3. まだGoogle Driveへ未アップロードのローカル新規ノートをアップロード
-        for (const note of state.notes) {
-          if (!note.gdriveFileId) {
-            await uploadNoteToGoogleDrive(note);
-            uploadedCount++;
+          syncNotebooksFromNotes();
+          if (!state.notes.some(n => n.id === state.activeNoteId)) {
+            state.activeNoteId = getFilteredAndSortedNotes()[0]?.id || null;
           }
-        }
+          state.lastSyncError = '';
+          await saveAllStateToDB();
+          renderAll();
 
-        syncNotebooksFromNotes();
-        if (!state.notes.some(n => n.id === state.activeNoteId)) {
-          state.activeNoteId = getFilteredAndSortedNotes()[0]?.id || null;
+          if (isManual || downloadedCount > 0 || uploadedCount > 0 || deletedCount > 0) {
+            showToast(`Googleドライブ同期完了（取得 ${downloadedCount}件 / 送信 ${uploadedCount}件）`, 'success');
+          }
+        } finally {
+          state.isGdriveSyncing = false;
+          el.syncGdriveIcon?.classList.remove('animate-spin');
+          updateGdriveStatusUI();
         }
-        await saveAllStateToDB();
-        renderAll();
-
-        if (isManual || downloadedCount > 0 || uploadedCount > 0 || deletedCount > 0) {
-          showToast(`Googleドライブ同期完了（取得 ${downloadedCount}件 / 送信 ${uploadedCount}件）`, 'success');
-        }
-      } catch (err) {
-        console.error('Google Drive 双方向同期エラー:', err);
-        showToast('Googleドライブとの同期中にエラーが発生しました', 'error');
-      } finally {
-        state.isGdriveSyncing = false;
-        el.syncGdriveIcon?.classList.remove('animate-spin');
-      }
+      });
     }
 
     async function connectGoogleDriveFlow() {
@@ -1852,8 +2070,10 @@ ${note.content || '<p></p>'}
         await requestGoogleAccessToken('');
         await syncWithGoogleDrive(true);
       } catch (err) {
+        state.lastSyncError = err.message || '認証に失敗しました';
+        updateGdriveStatusUI();
         console.error('Google認証エラー:', err);
-        showToast('Googleログインがキャンセルされたか、設定を確認してください（⚙️ボタン）', 'warning');
+        showToast(state.lastSyncError, 'error', 7000);
       }
     }
 
@@ -1983,7 +2203,7 @@ ${note.content || '<p></p>'}
         const noteObj = {
           id, title, content: htmlContent, plainText: stripHtmlToText(htmlContent),
           tags, pinned: false, trashed: false, stack: '', notebook: defaultNotebookName,
-          createdAt, updatedAt, filename: ensureHtmlFilename(title, id, ''), gdriveFileId: '', size: 0
+          createdAt, updatedAt, filename: ensureHtmlFilename(title, id, ''), gdriveFileId: '', needsSync: true, size: 0
         };
         noteObj.size = new Blob([serializeNoteToHTML(noteObj)]).size;
         return noteObj;
@@ -2256,7 +2476,7 @@ ${note.content || '<p></p>'}
         tags, pinned: state.activeFilter === 'pinned', trashed: false,
         stack: stack || loc.stack, notebook: notebook || loc.notebook,
         createdAt: now, updatedAt: now,
-        filename: ensureHtmlFilename(title || '新規ノート', id, ''), gdriveFileId: '', size: 0
+        filename: ensureHtmlFilename(title || '新規ノート', id, ''), gdriveFileId: '', needsSync: true, size: 0
       };
       note.size = estimateNoteBytes(note);
       return note;
@@ -2279,12 +2499,20 @@ ${note.content || '<p></p>'}
       const note = state.notes.find(n => n.id === targetId);
       if (!note) return;
       note.size = new Blob([serializeNoteToHTML(note)]).size;
-      await uploadNoteToGoogleDrive(note);
+      note.needsSync = true;
       await saveSingleNoteToDB(note);
+      await uploadNoteToGoogleDrive(note);
       updateTotalStorageStats();
+      updateGdriveStatusUI();
+
       if (state.activeNoteId === targetId) {
-        const label = state.gdriveToken ? 'クラウド保存済み' : 'HTML保存済み';
-        el.saveStatusIndicator.innerHTML = `<span style="width:8px;height:8px;border-radius:50%;background:var(--brand-500);"></span> ${label}`;
+        if (isGdriveConnected() && !note.needsSync) {
+          el.saveStatusIndicator.innerHTML = `<span style="width:8px;height:8px;border-radius:50%;background:var(--brand-500);"></span> クラウド保存済み`;
+        } else if (state.gdriveClientId) {
+          el.saveStatusIndicator.innerHTML = `<span style="width:8px;height:8px;border-radius:50%;background:var(--amber-500);"></span> 端末内保存済み（未同期）`;
+        } else {
+          el.saveStatusIndicator.innerHTML = `<span style="width:8px;height:8px;border-radius:50%;background:var(--brand-500);"></span> HTML保存済み`;
+        }
         el.noteUpdatedDisplay.textContent = `更新: ${formatDate(note.updatedAt)}`;
         el.noteSizeDisplay.textContent = formatBytes(note.size);
       }
@@ -2819,6 +3047,14 @@ ${note.content || '<p></p>'}
 
       el.trashedNoteNoticeBar.classList.toggle('hidden', !note.trashed);
       el.navBackNoteBtn.classList.toggle('hidden', state.noteHistory.length === 0);
+
+      if (isGdriveConnected() && !note.needsSync) {
+        el.saveStatusIndicator.innerHTML = `<span style="width:8px;height:8px;border-radius:50%;background:var(--brand-500);"></span> クラウド保存済み`;
+      } else if (state.gdriveClientId) {
+        el.saveStatusIndicator.innerHTML = `<span style="width:8px;height:8px;border-radius:50%;background:var(--amber-500);"></span> 端末内保存済み（未同期）`;
+      } else {
+        el.saveStatusIndicator.innerHTML = `<span style="width:8px;height:8px;border-radius:50%;background:var(--brand-500);"></span> HTML保存済み`;
+      }
 
       const sortedNbs = Array.from(getAllNotebooksMap().values()).sort((a, b) =>
         (a.stack ? `${a.stack}/${a.name}` : a.name).localeCompare(b.stack ? `${b.stack}/${b.name}` : b.name, 'ja')
@@ -3356,8 +3592,8 @@ ${note.content || '<p></p>'}
             <h2>初回セットアップ手順</h2>
             <ol>
               <li>左メニューの <strong>「⚙️（設定ボタン）」</strong> を開き、Google Cloud Console で取得した <strong>OAuth クライアントID</strong> を入力します。</li>
-              <li><strong>「Googleドライブに接続」</strong> を押して Google アカウントでログインすると、マイドライブ内に <code>LooseNote_Data</code> フォルダが自動作成され、PC・スマホ間でノートが直接同期されます。</li>
-              <li>同じ Google アカウントで別の端末（スマホや別PC）からも接続すれば、同じノート一覧を双方向で編集・同期できます。</li>
+              <li><strong>「Googleドライブに接続」</strong> を押して Google アカウントでログインし、アクセス許可画面のチェックボックスをオンにして「続行」を押すと同期が始まります。</li>
+              <li>同期がうまくいかない場合は、<strong>「⚙️（設定ボタン）」→「🔍 接続テスト＆原因診断を実行」</strong> で原因を自動特定できます。</li>
             </ol>`
         });
         welcome.pinned = true;
@@ -3369,10 +3605,9 @@ ${note.content || '<p></p>'}
       state.activeNoteId = state.notes.find(n => !n.trashed)?.id || null;
       renderAll();
 
-      // クライアントID設定済みならバックグラウンドでサイレント認証・自動同期を試行
+      // クライアントID設定済みならGoogle認証ライブラリをバックグラウンドで事前読込
       if (state.gdriveClientId) {
-        const token = await ensureValidGdriveToken(false);
-        if (token) await syncWithGoogleDrive(false);
+        loadGoogleIdentityScript().catch(() => {});
       }
     }
 
