@@ -1,0 +1,3382 @@
+<!DOCTYPE html>
+<html lang="ja" class="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LooseNote - Google Drive 直接連携版</title>
+  <style>
+    /* ==========================================================================
+       LooseNote セマンティックCSS（外部CSS不要・軽量スタンドアロン）
+       ========================================================================== */
+    :root {
+      --bg-body: #fafaf9;
+      --bg-sidebar: rgba(245, 245, 244, 0.96);
+      --bg-sidebar-footer: rgba(245, 245, 244, 0.78);
+      --bg-list: #ffffff;
+      --bg-editor: rgba(250, 250, 249, 0.55);
+      --bg-surface: #ffffff;
+      --bg-muted: #f5f5f4;
+      --bg-hover: rgba(231, 229, 228, 0.65);
+      --bg-active-card: rgba(240, 253, 244, 0.85);
+      --border: rgba(231, 229, 228, 0.9);
+      --border-strong: #d6d3d1;
+      --text-main: #1c1917;
+      --text-sub: #44403c;
+      --text-muted: #78716c;
+      --text-faint: #a8a29e;
+      --brand-50: #f0fdf4;
+      --brand-500: #22c55e;
+      --brand-600: #16a34a;
+      --brand-700: #15803d;
+      --sky-50: #f0f9ff;
+      --sky-600: #0284c7;
+      --sky-700: #0369a1;
+      --amber-100: #fef3c7;
+      --amber-500: #f59e0b;
+      --amber-800: #92400e;
+      --red-600: #dc2626;
+      --red-700: #b91c1c;
+    }
+
+    html.dark {
+      --bg-body: #020617;
+      --bg-sidebar: #0f172a;
+      --bg-sidebar-footer: rgba(15, 23, 42, 0.92);
+      --bg-list: rgba(15, 23, 42, 0.65);
+      --bg-editor: #020617;
+      --bg-surface: #0f172a;
+      --bg-muted: #1e293b;
+      --bg-hover: rgba(30, 41, 59, 0.85);
+      --bg-active-card: rgba(5, 46, 22, 0.45);
+      --border: rgba(30, 41, 59, 0.95);
+      --border-strong: #334155;
+      --text-main: #f8fafc;
+      --text-sub: #cbd5e1;
+      --text-muted: #94a3b8;
+      --text-faint: #64748b;
+      --brand-50: rgba(20, 83, 45, 0.35);
+      --brand-700: #86efac;
+      --sky-50: rgba(12, 74, 110, 0.35);
+      --sky-700: #7dd3fc;
+      --amber-100: rgba(120, 53, 15, 0.45);
+      --amber-800: #fcd34d;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Kaku Gothic ProN", "Noto Sans JP", Meiryo, sans-serif;
+      background: var(--bg-body);
+      color: var(--text-main);
+      -webkit-font-smoothing: antialiased;
+    }
+    body { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+    button, input, select { font: inherit; color: inherit; }
+    button { cursor: pointer; background: transparent; border: none; padding: 0; transition: background-color 0.15s, color 0.15s, opacity 0.15s; }
+
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: rgba(156, 163, 175, 0.35); border-radius: 9999px; }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(156, 163, 175, 0.6); }
+
+    .hidden { display: none !important; }
+    .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .line-clamp-1 { display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }
+    .line-clamp-2 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+    .ring-2 { box-shadow: 0 0 0 2px var(--brand-500); }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+    @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+    .animate-pulse { animation: pulse 1.5s infinite; }
+    .animate-spin { animation: spin 1s linear infinite; }
+
+    /* 汎用ボタン・バッジ・入力 */
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+      border-radius: 10px; font-weight: 500; padding: 6px 12px; font-size: 12px;
+    }
+    .btn-lg { width: 100%; padding: 10px 16px; border-radius: 12px; font-size: 14px; font-weight: 600; }
+    .btn-icon {
+      display: inline-flex; align-items: center; justify-content: center;
+      padding: 7px; border-radius: 8px; color: var(--text-muted);
+    }
+    .btn-icon:hover { background: var(--bg-hover); color: var(--text-main); }
+    .btn-brand { background: var(--brand-600); color: #fff; box-shadow: 0 1px 2px rgba(0,0,0,0.08); }
+    .btn-brand:hover { background: var(--brand-700); }
+    .btn-sky { background: var(--sky-600); color: #fff; box-shadow: 0 1px 2px rgba(0,0,0,0.08); }
+    .btn-sky:hover { background: var(--sky-700); }
+    .btn-danger { background: var(--red-600); color: #fff; }
+    .btn-danger:hover { background: var(--red-700); }
+    .btn-muted { background: var(--bg-muted); color: var(--text-sub); }
+    .btn-muted:hover { background: var(--bg-hover); }
+    .btn-surface { background: var(--bg-surface); border: 1px solid var(--border); color: var(--text-sub); }
+    .btn-surface:hover { background: var(--bg-hover); }
+
+    .badge { display: inline-flex; align-items: center; gap: 3px; font-size: 10px; padding: 2px 7px; border-radius: 9999px; font-weight: 500; }
+    .badge-brand { background: var(--brand-50); color: var(--brand-700); }
+    .badge-amber { background: var(--amber-100); color: var(--amber-800); }
+    .badge-sky { background: var(--sky-50); color: var(--sky-700); }
+    .badge-muted { background: var(--bg-muted); color: var(--text-muted); }
+
+    .field-input {
+      width: 100%; padding: 8px 12px; background: var(--bg-muted); border: 1px solid var(--border);
+      border-radius: 10px; font-size: 13px; color: var(--text-main); outline: none;
+    }
+    .field-input:focus { border-color: var(--brand-500); }
+    .field-label { display: block; font-size: 11px; font-weight: 600; color: var(--text-muted); margin-bottom: 4px; }
+
+    /* 3ペインレイアウト */
+    .workspace { display: flex; flex: 1; height: 100%; overflow: hidden; position: relative; }
+    .sidebar-backdrop { position: fixed; inset: 0; z-index: 30; background: rgba(0,0,0,0.42); }
+
+    .sidebar {
+      position: fixed; inset: 0 auto 0 0; z-index: 40; width: 288px; flex-shrink: 0;
+      background: var(--bg-sidebar); border-right: 1px solid var(--border);
+      display: flex; flex-direction: column; transform: translateX(-100%); transition: transform 0.2s ease-out;
+    }
+    .sidebar.open { transform: translateX(0); }
+
+    .sidebar-header {
+      padding: 14px 16px; border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .brand-logo { display: flex; align-items: center; gap: 10px; }
+    .brand-icon {
+      width: 32px; height: 32px; border-radius: 10px; background: var(--sky-600); color: #fff;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .storage-card {
+      margin: 0 12px 8px; padding: 10px; border-radius: 12px;
+      background: var(--bg-surface); border: 1px solid var(--border);
+      display: flex; flex-direction: column; gap: 7px;
+    }
+    .sidebar-scroll { flex: 1; overflow-y: auto; padding: 8px 12px; display: flex; flex-direction: column; gap: 16px; }
+    .section-heading {
+      font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em;
+      color: var(--text-faint); padding: 0 8px; margin-bottom: 4px;
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .nav-item {
+      width: 100%; display: flex; align-items: center; justify-content: space-between;
+      padding: 7px 10px; border-radius: 8px; font-size: 13px; color: var(--text-sub);
+    }
+    .nav-item:hover { background: var(--bg-hover); }
+    .nav-item.active { background: var(--brand-50); color: var(--brand-700); font-weight: 600; }
+    .tree-row {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 5px 8px; border-radius: 8px; font-size: 12px; color: var(--text-sub);
+    }
+    .tree-row:hover { background: var(--bg-hover); }
+    .tree-row.active { background: var(--brand-50); color: var(--brand-700); font-weight: 600; }
+    .tree-row.indented { padding-left: 24px; }
+    .tree-row .hover-action { opacity: 0; padding: 2px; border-radius: 4px; color: var(--text-faint); display: inline-flex; align-items: center; }
+    .tree-row:hover .hover-action { opacity: 1; }
+    .sidebar-footer {
+      padding: 12px; background: var(--bg-sidebar-footer); border-top: 1px solid var(--border);
+      display: flex; flex-direction: column; gap: 6px;
+    }
+
+    /* 中央ノート一覧ペイン */
+    .list-pane {
+      width: 100%; background: var(--bg-list); border-right: 1px solid var(--border);
+      display: flex; flex-direction: column; flex-shrink: 0; height: 100%; position: relative;
+    }
+    .list-header { padding: 12px; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 10px; }
+    .search-box { position: relative; flex: 1; }
+    .search-box input {
+      width: 100%; padding: 8px 30px 8px 34px; background: var(--bg-muted);
+      border: 1px solid var(--border); border-radius: 12px; font-size: 13px; outline: none;
+    }
+    .search-box input:focus { border-color: var(--brand-500); }
+    .notes-scroll { flex: 1; overflow-y: auto; }
+
+    .note-card {
+      border-bottom: 1px solid var(--border); border-left: 4px solid transparent;
+      padding: 13px 14px; cursor: pointer; user-select: none; transition: background-color 0.14s;
+    }
+    .note-card:hover { background: var(--bg-hover); }
+    .note-card.active { background: var(--bg-active-card); border-left-color: var(--brand-500); }
+    .note-card.checked { background: var(--sky-50); }
+    .note-card.compact { padding: 8px 12px; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .note-thumb {
+      width: 48px; height: 48px; border-radius: 8px; object-fit: cover;
+      border: 1px solid var(--border); flex-shrink: 0; background: var(--bg-muted);
+    }
+
+    .bulk-bar {
+      padding: 10px 12px; background: var(--bg-surface); border-top: 1px solid var(--border);
+      box-shadow: 0 -4px 12px rgba(0,0,0,0.06); display: flex; align-items: center; justify-content: space-between; gap: 6px; font-size: 12px;
+    }
+
+    /* 右エディタペイン */
+    .editor-pane {
+      display: none; flex: 1; flex-direction: column; background: var(--bg-editor); height: 100%; min-width: 0; position: relative;
+    }
+    .editor-pane.mobile-open { display: flex; }
+    .editor-topbar {
+      padding: 10px 16px; background: var(--bg-surface); border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-shrink: 0;
+    }
+    .editor-toolbar {
+      padding: 6px 16px; background: var(--bg-surface); border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; gap: 6px; overflow-x: auto; flex-shrink: 0;
+    }
+    .editor-scroll { flex: 1; overflow-y: auto; padding: 24px 20px; max-width: 896px; width: 100%; margin: 0 auto; }
+    .note-title-input {
+      width: 100%; font-size: 24px; font-weight: 700; color: var(--text-main);
+      background: transparent; border: none; outline: none; margin-bottom: 12px;
+    }
+
+    /* リッチエディタ本文スタイル */
+    #note-rich-editor { outline: none; line-height: 1.8; word-break: break-word; min-height: 380px; padding-bottom: 80px; font-size: 15px; }
+    #note-rich-editor:empty:before { content: attr(data-placeholder); color: var(--text-faint); pointer-events: none; display: block; }
+    #note-rich-editor h1 { font-size: 1.65rem; font-weight: 700; margin: 1.2rem 0 0.6rem; line-height: 1.3; }
+    #note-rich-editor h2 { font-size: 1.35rem; font-weight: 700; margin: 1.1rem 0 0.5rem; line-height: 1.35; }
+    #note-rich-editor h3 { font-size: 1.12rem; font-weight: 600; margin: 0.9rem 0 0.4rem; }
+    #note-rich-editor p { margin: 0.45rem 0; }
+    #note-rich-editor ul { list-style: disc; padding-left: 1.5rem; margin: 0.5rem 0; }
+    #note-rich-editor ol { list-style: decimal; padding-left: 1.5rem; margin: 0.5rem 0; }
+    #note-rich-editor blockquote { border-left: 4px solid #22c55e; padding: 0.4rem 1rem; margin: 0.85rem 0; background: rgba(34,197,94,0.07); border-radius: 0 8px 8px 0; color: var(--text-sub); }
+    #note-rich-editor pre { background: var(--bg-muted); padding: 0.9rem 1rem; border-radius: 10px; overflow-x: auto; font-family: monospace; font-size: 0.85rem; margin: 0.85rem 0; }
+    #note-rich-editor img { max-width: 100%; height: auto; border-radius: 10px; margin: 0.75rem 0; box-shadow: 0 2px 8px rgba(0,0,0,0.08); cursor: pointer; }
+    #note-rich-editor img.selected-editor-img { outline: 3px solid #22c55e; outline-offset: 2px; }
+    #note-rich-editor a { color: #16a34a; text-decoration: underline; cursor: pointer; }
+    html.dark #note-rich-editor a { color: #4ade80; }
+    #note-rich-editor a[download] {
+      display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px; border-radius: 8px;
+      background: rgba(22, 163, 74, 0.12); text-decoration: none; font-weight: 500;
+    }
+    #note-rich-editor a[download]:hover { background: rgba(22, 163, 74, 0.22); }
+    #note-rich-editor table { border-collapse: collapse; width: 100%; margin: 0.85rem 0; font-size: 0.9rem; }
+    #note-rich-editor th, #note-rich-editor td { border: 1px solid var(--border-strong); padding: 0.45rem 0.65rem; vertical-align: top; }
+    .loosenote-edit-link-card-btn {
+      float: right; font-size: 11px; font-weight: 600; padding: 3px 8px; border-radius: 6px;
+      background: #e0f2fe; color: #0369a1; border: 1px solid #bae6fd; cursor: pointer;
+    }
+    .loosenote-edit-link-card-btn:hover { background: #bae6fd; }
+
+    /* ノート間リンクチップ & [[ クイック候補ポップアップ */
+    #note-rich-editor a.loosenote-internal-link {
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 1px 9px; margin: 0 2px; border-radius: 7px;
+      background: var(--brand-50); color: var(--brand-700);
+      border: 1px solid rgba(34, 197, 94, 0.35);
+      text-decoration: none; font-weight: 600; font-size: 0.92em;
+      vertical-align: baseline; cursor: pointer;
+    }
+    #note-rich-editor a.loosenote-internal-link:hover {
+      background: rgba(34, 197, 94, 0.22); text-decoration: none;
+    }
+    .wiki-link-popup {
+      position: fixed; z-index: 45; width: 290px; max-height: 230px; overflow-y: auto;
+      background: var(--bg-surface); border: 1px solid var(--border-strong);
+      border-radius: 12px; box-shadow: 0 12px 24px -6px rgba(0, 0, 0, 0.2);
+      padding: 4px; display: flex; flex-direction: column; gap: 2px;
+    }
+    .wiki-link-item {
+      width: 100%; text-align: left; padding: 7px 10px; border-radius: 8px;
+      font-size: 12px; display: flex; align-items: center; justify-content: space-between; gap: 6px;
+    }
+    .wiki-link-item:hover, .wiki-link-item.active {
+      background: var(--brand-50); color: var(--brand-700);
+    }
+    .toolbar-sep { width: 1px; height: 16px; background: var(--border-strong); margin: 0 2px; flex-shrink: 0; }
+    .date-edit-btn {
+      display: inline-flex; align-items: center; gap: 3px; color: var(--text-faint);
+      border-bottom: 1px dashed var(--border-strong); padding-bottom: 1px;
+    }
+    .date-edit-btn:hover { color: var(--text-sub); border-bottom-color: var(--brand-500); }
+
+    /* モーダル・オーバーレイ・トースト */
+    .overlay-backdrop {
+      position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center;
+      padding: 16px; background: rgba(0, 0, 0, 0.55); backdrop-filter: blur(2px);
+    }
+    .modal-card {
+      background: var(--bg-surface); border: 1px solid var(--border); border-radius: 18px;
+      max-width: 460px; width: 100%; padding: 24px; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.28);
+      max-height: 90vh; overflow-y: auto;
+    }
+    .floating-bar {
+      position: fixed; z-index: 40; display: flex; align-items: center; gap: 4px; padding: 6px;
+      border-radius: 12px; background: var(--bg-surface); border: 1px solid var(--border);
+      box-shadow: 0 10px 15px -3px rgba(0,0,0,0.12); font-size: 12px;
+    }
+    .toast-stack {
+      position: fixed; bottom: 20px; right: 20px; z-index: 50;
+      display: flex; flex-direction: column; gap: 8px; max-width: 360px; width: calc(100% - 40px); pointer-events: none;
+    }
+
+    @media (min-width: 640px) {
+      .editor-scroll { padding: 24px 40px; }
+      .note-title-input { font-size: 28px; }
+    }
+    @media (min-width: 768px) {
+      .list-pane { width: 320px; }
+      .editor-pane { display: flex !important; }
+      .mobile-only { display: none !important; }
+    }
+    @media (min-width: 1024px) {
+      .sidebar { position: static; transform: translateX(0); }
+      .lg-hidden { display: none !important; }
+      .list-pane { width: 368px; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- 画面全体ドラッグ＆ドロップオーバーレイ -->
+  <div id="global-drop-overlay" class="overlay-backdrop hidden" style="background:rgba(5,46,22,0.8);pointer-events:none;">
+    <div class="modal-card" style="max-width:480px;text-align:center;padding:36px;border:2px dashed #4ade80;">
+      <div class="badge-brand" style="width:56px;height:56px;margin:0 auto 14px;border-radius:16px;display:flex;align-items:center;justify-content:center;">
+        <svg width="28" height="28" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path></svg>
+      </div>
+      <h2 style="margin:0 0 8px;font-size:19px;">ここにファイルを放り込む</h2>
+      <p style="margin:0;font-size:13px;color:var(--text-sub);line-height:1.6;">
+        画像・PDF・テキスト・HTMLを即座にノート化します（10MB超は自動でリンク運用を提案）。<br>
+        Evernoteの <strong>.enex</strong> やバックアップ <strong>.zip</strong> も一括インポートできます。
+      </p>
+    </div>
+  </div>
+
+  <!-- 画像サイズ調整ミニツールバー -->
+  <div id="image-floating-toolbar" class="floating-bar hidden">
+    <span style="padding:0 6px;font-size:11px;color:var(--text-muted);">画像サイズ:</span>
+    <button type="button" data-img-size="240px" class="btn btn-muted" style="padding:4px 8px;">小</button>
+    <button type="button" data-img-size="480px" class="btn btn-muted" style="padding:4px 8px;">中</button>
+    <button type="button" data-img-size="100%" class="btn btn-muted" style="padding:4px 8px;">大</button>
+    <span style="width:1px;height:16px;background:var(--border-strong);margin:0 2px;"></span>
+    <button type="button" id="img-lightbox-open-btn" class="btn badge-brand" style="padding:4px 8px;font-weight:600;">🔍 拡大</button>
+  </div>
+
+  <!-- [[ 入力時のノート間リンククイック候補ポップアップ -->
+  <div id="note-link-popup" class="wiki-link-popup hidden"></div>
+
+  <!-- 画像拡大ライトボックス -->
+  <div id="image-lightbox-modal" class="overlay-backdrop hidden" style="background:rgba(0,0,0,0.88);">
+    <button type="button" id="img-lightbox-close-btn" class="btn" style="position:fixed;top:16px;right:16px;background:rgba(255,255,255,0.18);color:#fff;font-weight:700;">✕ 閉じる (ESC)</button>
+    <img id="img-lightbox-preview" src="" alt="拡大プレビュー" style="max-width:94vw;max-height:90vh;border-radius:12px;object-fit:contain;">
+  </div>
+
+  <!-- 統一ダイアログモーダル -->
+  <div id="custom-modal" class="overlay-backdrop hidden">
+    <div class="modal-card">
+      <h3 id="modal-title" style="margin:0 0 8px;font-size:17px;font-weight:700;">確認</h3>
+      <p id="modal-message" style="margin:0 0 16px;font-size:13px;color:var(--text-sub);line-height:1.6;white-space:pre-line;"></p>
+      <div id="modal-body" style="margin-bottom:20px;"></div>
+      <div id="modal-actions" style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;"></div>
+    </div>
+  </div>
+
+  <!-- トースト通知 -->
+  <div id="toast-container" class="toast-stack"></div>
+
+  <!-- メイン3ペイン -->
+  <div class="workspace">
+    <div id="sidebar-backdrop" class="sidebar-backdrop hidden lg-hidden"></div>
+
+    <!-- 第1ペイン：左サイドバー -->
+    <aside id="left-sidebar" class="sidebar">
+      <div class="sidebar-header">
+        <div class="brand-logo">
+          <div class="brand-icon">
+            <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z"></path></svg>
+          </div>
+          <div>
+            <div style="font-weight:700;font-size:15px;line-height:1.1;">LooseNote <span style="font-size:10px;color:var(--sky-600);font-weight:700;">Cloud</span></div>
+            <div style="font-size:10px;color:var(--text-muted);margin-top:2px;">Google Drive API 直接連携版</div>
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:4px;">
+          <button id="theme-toggle-btn" title="ライト/ダークモード切替" class="btn-icon">
+            <svg id="theme-icon-sun" class="hidden" width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"></path></svg>
+            <svg id="theme-icon-moon" width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"></path></svg>
+          </button>
+          <button id="close-sidebar-btn" class="btn-icon lg-hidden" title="閉じる">
+            <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+          </button>
+        </div>
+      </div>
+
+      <div style="padding:12px;">
+        <button id="new-note-btn" class="btn btn-lg btn-brand">
+          <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 4v16m8-8H4"></path></svg>
+          新規ノート作成
+        </button>
+      </div>
+
+      <!-- Google Drive API 直接同期カード（PC・スマホ両対応） -->
+      <div class="storage-card">
+        <div style="display:flex;align-items:center;justify-content:space-between;">
+          <span style="font-size:11px;font-weight:600;color:var(--text-muted);">Googleドライブ直接同期</span>
+          <span id="storage-badge" class="badge badge-amber">未接続</span>
+        </div>
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;font-size:12px;color:var(--text-sub);">
+          <span id="storage-folder-name" class="truncate">PC・スマホから直接クラウド同期</span>
+          <span id="total-data-size-badge" class="badge badge-muted" style="font-family:monospace;flex-shrink:0;">0 B</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:5px;">
+          <button id="connect-gdrive-btn" class="btn btn-sky" style="flex:1;min-width:0;padding:6px 8px;">
+            <svg width="14" height="14" style="flex-shrink:0;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z"></path></svg>
+            <span id="connect-gdrive-btn-text" class="truncate">Googleドライブに接続</span>
+          </button>
+          <button id="sync-gdrive-now-btn" title="今すぐ双方向同期（他端末の編集を反映）" class="btn badge-brand hidden" style="padding:6px 8px;border:1px solid var(--border);">
+            <svg id="sync-gdrive-icon" width="15" height="15" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+          </button>
+          <button id="gdrive-settings-btn" title="Google Drive API 設定（クライアントID・フォルダ名）" class="btn btn-muted" style="padding:6px 8px;">
+            ⚙️
+          </button>
+        </div>
+      </div>
+
+      <!-- ビュー・スタック＆ノートブック -->
+      <div class="sidebar-scroll">
+        <div>
+          <div class="section-heading">ビュー</div>
+          <nav style="display:flex;flex-direction:column;gap:2px;">
+            <button data-filter="all" class="filter-btn nav-item active">
+              <span style="display:flex;align-items:center;gap:8px;">
+                <svg width="15" height="15" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
+                すべてのノート
+              </span>
+              <span id="count-all" style="font-size:12px;">0</span>
+            </button>
+            <button data-filter="pinned" class="filter-btn nav-item">
+              <span style="display:flex;align-items:center;gap:8px;">
+                <svg width="15" height="15" style="color:var(--amber-500);" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z"></path></svg>
+                ピン留め
+              </span>
+              <span id="count-pinned" style="font-size:12px;">0</span>
+            </button>
+          </nav>
+        </div>
+
+        <div>
+          <div class="section-heading">
+            <span>スタック & ノートブック</span>
+            <button id="create-notebook-btn" title="新しいノートブック・スタックを作成" class="btn-icon" style="padding:3px;">
+              <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 4v16m8-8H4"></path></svg>
+            </button>
+          </div>
+          <div id="sidebar-notebooks-tree" style="display:flex;flex-direction:column;gap:3px;"></div>
+        </div>
+      </div>
+
+      <!-- Evernote移行＆バックアップフッター -->
+      <div class="sidebar-footer">
+        <button id="import-enex-btn" class="btn badge-brand" style="width:100%;padding:8px 12px;border:1px solid var(--border);font-weight:600;">
+          <svg width="15" height="15" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path></svg>
+          Evernote (.enex) / ZIP 読込
+        </button>
+        <input type="file" id="enex-file-input" accept=".enex,.xml,.zip,.html,.htm" multiple class="hidden">
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
+          <button id="export-zip-btn" class="btn btn-surface" style="font-size:11px;padding:6px 8px;">
+            <svg width="13" height="13" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+            HTML一括ZIP
+          </button>
+          <button id="clear-all-btn" class="btn btn-surface" style="font-size:11px;padding:6px 8px;">
+            <svg width="13" height="13" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+            画面を空にする
+          </button>
+        </div>
+      </div>
+    </aside>
+
+    <!-- 第2ペイン：ノート一覧＆高速検索 -->
+    <section id="note-list-pane" class="list-pane">
+      <div class="list-header">
+        <div style="display:flex;align-items:center;gap:8px;">
+          <button id="open-sidebar-btn" class="btn-icon lg-hidden" style="background:var(--bg-muted);" title="メニュー">
+            <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path></svg>
+          </button>
+          <div class="search-box">
+            <svg width="15" height="15" style="position:absolute;left:11px;top:50%;transform:translateY(-50%);color:var(--text-faint);pointer-events:none;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+            <input type="text" id="search-input" placeholder="タイトル・本文・タグを高速検索...">
+            <button id="clear-search-btn" class="hidden" style="position:absolute;right:9px;top:50%;transform:translateY(-50%);color:var(--text-faint);">
+              <svg width="15" height="15" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+            </button>
+          </div>
+        </div>
+
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;">
+          <div style="display:flex;align-items:center;gap:6px;min-width:0;">
+            <span id="current-view-label" class="truncate" style="font-size:12px;font-weight:700;color:var(--text-sub);">すべてのノート</span>
+            <span id="filtered-count-badge" class="badge badge-muted">0</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:4px;flex-shrink:0;">
+            <select id="sort-select" style="font-size:12px;background:var(--bg-muted);color:var(--text-sub);border:1px solid var(--border);border-radius:8px;padding:4px 8px;outline:none;cursor:pointer;">
+              <option value="updated-desc">更新日順</option>
+              <option value="created-desc">作成日（新しい順）</option>
+              <option value="created-asc">作成日（古い順）</option>
+              <option value="title-asc">タイトル順</option>
+              <option value="size-desc">データ量順</option>
+            </select>
+            <button type="button" id="toggle-compact-list-btn" title="表示切替（標準カード / コンパクト1行リスト）" class="btn-surface" style="padding:5px 6px;border-radius:8px;display:inline-flex;align-items:center;">
+              <svg id="icon-view-compact" width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 10h16M4 14h16M4 18h16"></path></svg>
+              <svg id="icon-view-card" class="hidden" width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 5a1 1 0 011-1h14a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1V5zm0 10a1 1 0 011-1h14a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1v-4z"></path></svg>
+            </button>
+          </div>
+        </div>
+
+        <div id="trash-view-banner" class="hidden badge-amber" style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 10px;border-radius:10px;font-size:12px;">
+          <span>誤削除したノートを復元できます</span>
+          <button type="button" id="empty-trash-btn" class="btn btn-danger" style="padding:4px 8px;font-size:11px;">ゴミ箱を空にする</button>
+        </div>
+      </div>
+
+      <div id="notes-list-container" class="notes-scroll"></div>
+
+      <div id="bulk-action-bar" class="bulk-bar hidden">
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-weight:700;">
+          <input type="checkbox" id="bulk-select-all-checkbox">
+          <span id="bulk-selected-count">0件選択</span>
+        </label>
+        <div style="display:flex;align-items:center;gap:4px;">
+          <button type="button" id="bulk-move-btn" class="btn btn-muted" style="padding:4px 8px;">📁 移動</button>
+          <button type="button" id="bulk-tag-btn" class="btn btn-muted" style="padding:4px 8px;">🏷️ タグ</button>
+          <button type="button" id="bulk-trash-btn" class="btn btn-danger" style="padding:4px 8px;">🗑️ 削除</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- 第3ペイン：シンプルHTMLリッチエディタ -->
+    <main id="editor-pane" class="editor-pane">
+      <div id="empty-editor-state" style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:32px;text-align:center;">
+        <div style="width:60px;height:60px;border-radius:16px;background:var(--bg-muted);color:var(--text-faint);display:flex;align-items:center;justify-content:center;margin-bottom:14px;">
+          <svg width="30" height="30" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+        </div>
+        <h3 style="margin:0 0 6px;font-size:16px;color:var(--text-sub);">ノートが選択されていません</h3>
+        <p style="margin:0 0 18px;font-size:12px;color:var(--text-muted);max-width:360px;line-height:1.6;">
+          左の「新規ノート作成」から書き始めるか、画像・PDF・.enex ファイルを画面にドラッグ＆ドロップして放り込んでください。
+        </p>
+        <button id="empty-create-btn" class="btn btn-brand">＋ 新しいノートを作成</button>
+      </div>
+
+      <div id="active-editor-container" class="hidden" style="flex:1;display:flex;flex-direction:column;height:100%;overflow:hidden;">
+        <div id="trashed-note-notice-bar" class="hidden badge-amber" style="padding:10px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:12px;">
+          <span style="font-weight:600;">🗑️ このノートはゴミ箱に入っています</span>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <button type="button" id="restore-trashed-note-btn" class="btn btn-brand" style="padding:4px 10px;">♻️ 元の場所へ復元</button>
+            <button type="button" id="permanent-delete-note-btn" class="btn btn-danger" style="padding:4px 10px;">🔥 完全に削除</button>
+          </div>
+        </div>
+
+        <header class="editor-topbar">
+          <div style="display:flex;align-items:center;gap:8px;min-width:0;">
+            <button id="mobile-back-btn" class="btn btn-muted mobile-only" style="padding:5px 8px;">← 一覧</button>
+            <button type="button" id="nav-back-note-btn" class="btn btn-surface hidden" style="padding:4px 8px;font-size:11px;" title="リンク元のノートへ戻る">← 戻る</button>
+            <span id="save-status-indicator" style="font-size:12px;color:var(--text-muted);display:flex;align-items:center;gap:6px;">
+              <span style="width:8px;height:8px;border-radius:50%;background:var(--brand-500);"></span> HTML保存済み
+            </span>
+          </div>
+          <div style="display:flex;align-items:center;gap:4px;">
+            <button id="pin-note-btn" title="ピン留め切替" class="btn-icon">
+              <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z"></path></svg>
+            </button>
+            <button id="download-single-html-btn" title="単体HTMLファイルとしてダウンロード" class="btn-icon">
+              <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+            </button>
+            <button id="delete-note-btn" title="ゴミ箱へ移動" class="btn-icon">
+              <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+            </button>
+          </div>
+        </header>
+
+        <!-- ツールバー -->
+        <div id="editor-toolbar" class="editor-toolbar">
+          <button type="button" data-cmd="formatBlock" data-val="H2" class="toolbar-btn btn" style="padding:4px 8px;font-weight:700;color:var(--text-sub);">見出し</button>
+          <button type="button" data-cmd="bold" class="toolbar-btn btn" style="padding:4px 8px;font-weight:700;color:var(--text-sub);">B</button>
+          <button type="button" data-cmd="insertUnorderedList" title="箇条書き" class="toolbar-btn btn-icon" style="padding:5px;">
+            <svg width="15" height="15" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path></svg>
+          </button>
+          <button type="button" id="insert-checkbox-btn" class="btn" style="padding:4px 8px;color:var(--text-sub);">☑ ToDo</button>
+          <span class="toolbar-sep"></span>
+          <button type="button" id="embed-media-btn" class="btn badge-brand" style="padding:4px 10px;">
+            <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
+            画像・PDF埋め込み
+          </button>
+          <button type="button" id="insert-link-card-btn" class="btn badge-sky" style="padding:4px 10px;">
+            <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"></path></svg>
+            Googleドライブリンク
+          </button>
+          <button type="button" id="insert-note-link-btn" class="btn btn-muted" style="padding:4px 10px;" title="他のノートへのリンクを挿入（本文で [[ と入力しても選べます）">
+            🔗 ノートリンク
+          </button>
+          <input type="file" id="embed-media-input" accept="image/*,.pdf" multiple class="hidden">
+        </div>
+
+        <div class="editor-scroll">
+          <div style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;margin-bottom:12px;">
+            <div style="display:flex;align-items:center;gap:6px;background:var(--bg-surface);border:1px solid var(--border);border-radius:10px;padding:4px 10px;">
+              <svg width="14" height="14" style="color:var(--brand-600);flex-shrink:0;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"></path></svg>
+              <select id="note-notebook-select" style="font-size:12px;font-weight:500;color:var(--text-sub);background:transparent;border:none;outline:none;cursor:pointer;max-width:220px;">
+                <option value="">未分類 (インボックス)</option>
+              </select>
+              <button type="button" id="quick-new-notebook-inline-btn" class="badge badge-muted" style="cursor:pointer;">+新規</button>
+            </div>
+            <div style="display:flex;flex-wrap:wrap;align-items:center;gap:12px;font-size:11px;color:var(--text-faint);">
+              <button type="button" id="edit-created-btn" class="date-edit-btn" title="クリックして作成日時を変更">
+                <span id="note-created-display">作成: -</span>
+                <span style="font-size:10px;">✎</span>
+              </button>
+              <span id="note-updated-display">更新: -</span>
+              <span id="note-size-display" style="font-family:monospace;">0 B</span>
+            </div>
+          </div>
+
+          <input type="text" id="note-title-input" placeholder="ノートのタイトル..." class="note-title-input">
+
+          <div style="display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding-bottom:14px;margin-bottom:18px;border-bottom:1px solid var(--border);">
+            <svg width="14" height="14" style="color:var(--text-faint);flex-shrink:0;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z"></path></svg>
+            <div id="active-note-tags" style="display:flex;flex-wrap:wrap;align-items:center;gap:6px;"></div>
+            <input type="text" id="add-tag-input" placeholder="+ タグを追加 (Enter)" style="font-size:12px;color:var(--text-sub);background:transparent;border:none;outline:none;min-width:130px;padding:3px 0;">
+          </div>
+
+          <div id="note-rich-editor" contenteditable="true" data-placeholder="ここに自由にメモを書いたり、スクリーンショット(Ctrl+V)やPDF・画像をドロップして放り込めます..."></div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    /**
+     * ==========================================================================
+     * LooseNote Cloud - Google Drive API 直接連携版（PC・スマホ両対応）
+     * ==========================================================================
+     */
+    const LARGE_FILE_THRESHOLD = 10 * 1024 * 1024;
+    const TOTAL_STORAGE_WARN_THRESHOLD = 150 * 1024 * 1024;
+    const GDRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
+    const LS_CLIENT_ID_KEY = 'loosenote-gdrive-client-id';
+    const LS_FOLDER_NAME_KEY = 'loosenote-gdrive-folder-name';
+
+    const el = new Proxy({}, {
+      get(target, prop) {
+        if (typeof prop !== 'string') return undefined;
+        if (!target[prop]) {
+          target[prop] = document.getElementById(prop.replace(/[A-Z]/g, m => '-' + m.toLowerCase()));
+        }
+        return target[prop];
+      }
+    });
+
+    const state = {
+      notes: [],
+      notebooks: [],
+      collapsedStacks: new Set(),
+      selectedNoteIds: new Set(),
+      activeNoteId: null,
+      searchQuery: '',
+      activeFilter: 'all',
+      sortBy: 'updated-desc',
+      isCompactList: localStorage.getItem('loosenote-compact') === 'true',
+      saveTimeout: null,
+      pendingSaveNoteId: null,
+      activeEditorImg: null,
+      noteHistory: [],
+      wikiLinkState: null,
+      savedEditorRange: null,
+      // Google Drive API 連携状態
+      gdriveClientId: localStorage.getItem(LS_CLIENT_ID_KEY) || '',
+      gdriveFolderName: localStorage.getItem(LS_FOLDER_NAME_KEY) || 'LooseNote_Data',
+      gdriveToken: null,
+      gdriveTokenExpiry: 0,
+      gdriveRootFolderId: null,
+      gdriveFolderCache: new Map(), // "stack/notebook" -> folderId
+      isGdriveSyncing: false
+    };
+
+    /* ==========================================================================
+       1. 完全内蔵 ZIP エンコーダ＆デコーダ（外部ライブラリ不要・UTF-8日本語対応）
+       ========================================================================== */
+    const StandaloneZip = (() => {
+      const crcTable = new Uint32Array(256);
+      for (let i = 0; i < 256; i++) {
+        let c = i;
+        for (let k = 0; k < 8; k++) c = (c & 1) ? (0xedb88320 ^ (c >>> 1)) : (c >>> 1);
+        crcTable[i] = c >>> 0;
+      }
+
+      const crc32 = (bytes) => {
+        let crc = 0xffffffff;
+        for (let i = 0; i < bytes.length; i++) crc = crcTable[(crc ^ bytes[i]) & 0xff] ^ (crc >>> 8);
+        return (crc ^ 0xffffffff) >>> 0;
+      };
+
+      async function deflateRaw(bytes) {
+        if (typeof CompressionStream === 'undefined') return null;
+        try {
+          const cs = new CompressionStream('deflate-raw');
+          const writer = cs.writable.getWriter();
+          writer.write(bytes);
+          writer.close();
+          return new Uint8Array(await new Response(cs.readable).arrayBuffer());
+        } catch { return null; }
+      }
+
+      async function inflateRaw(bytes) {
+        const ds = new DecompressionStream('deflate-raw');
+        const writer = ds.writable.getWriter();
+        writer.write(bytes);
+        writer.close();
+        return new Uint8Array(await new Response(ds.readable).arrayBuffer());
+      }
+
+      async function createZipBlob(filesMap) {
+        const encoder = new TextEncoder();
+        const localChunks = [], centralChunks = [];
+        let offset = 0, entryCount = 0;
+        const d = new Date();
+        const dosTime = ((d.getHours() & 0x1f) << 11) | ((d.getMinutes() & 0x3f) << 5) | ((d.getSeconds() >> 1) & 0x1f);
+        const dosDate = (((Math.max(1980, d.getFullYear()) - 1980) & 0x7f) << 9) | (((d.getMonth() + 1) & 0x0f) << 5) | (d.getDate() & 0x1f);
+
+        for (const [path, contentStr] of filesMap.entries()) {
+          const nameBytes = encoder.encode(path);
+          const rawBytes = encoder.encode(contentStr);
+          const checksum = crc32(rawBytes);
+          const compressed = await deflateRaw(rawBytes);
+          const useDeflate = compressed && compressed.length < rawBytes.length;
+          const dataBytes = useDeflate ? compressed : rawBytes;
+          const method = useDeflate ? 8 : 0;
+
+          const lfh = new Uint8Array(30 + nameBytes.length);
+          const lv = new DataView(lfh.buffer);
+          lv.setUint32(0, 0x04034b50, true); lv.setUint16(4, 20, true); lv.setUint16(6, 0x0800, true);
+          lv.setUint16(8, method, true); lv.setUint16(10, dosTime, true); lv.setUint16(12, dosDate, true);
+          lv.setUint32(14, checksum, true); lv.setUint32(18, dataBytes.length, true); lv.setUint32(22, rawBytes.length, true);
+          lv.setUint16(26, nameBytes.length, true);
+          lfh.set(nameBytes, 30);
+          localChunks.push(lfh, dataBytes);
+
+          const cdh = new Uint8Array(46 + nameBytes.length);
+          const cv = new DataView(cdh.buffer);
+          cv.setUint32(0, 0x02014b50, true); cv.setUint16(4, 20, true); cv.setUint16(6, 20, true);
+          cv.setUint16(8, 0x0800, true); cv.setUint16(10, method, true); cv.setUint16(12, dosTime, true);
+          cv.setUint16(14, dosDate, true); cv.setUint32(16, checksum, true); cv.setUint32(20, dataBytes.length, true);
+          cv.setUint32(24, rawBytes.length, true); cv.setUint16(28, nameBytes.length, true); cv.setUint32(42, offset, true);
+          cdh.set(nameBytes, 46);
+          centralChunks.push(cdh);
+
+          offset += lfh.length + dataBytes.length;
+          entryCount++;
+        }
+
+        const centralSize = centralChunks.reduce((acc, c) => acc + c.length, 0);
+        const eocd = new Uint8Array(22);
+        const ev = new DataView(eocd.buffer);
+        ev.setUint32(0, 0x06054b50, true);
+        ev.setUint16(8, entryCount, true); ev.setUint16(10, entryCount, true);
+        ev.setUint32(12, centralSize, true); ev.setUint32(16, offset, true);
+
+        return new Blob([...localChunks, ...centralChunks, eocd], { type: 'application/zip' });
+      }
+
+      async function extractHtmlFilesFromZip(arrayBuffer) {
+        const bytes = new Uint8Array(arrayBuffer);
+        const view = new DataView(arrayBuffer);
+        const decoder = new TextDecoder('utf-8');
+        const results = [];
+
+        let eocdPos = -1;
+        for (let i = bytes.length - 22; i >= Math.max(0, bytes.length - 65558); i--) {
+          if (view.getUint32(i, true) === 0x06054b50) { eocdPos = i; break; }
+        }
+        if (eocdPos === -1) throw new Error('有効なZIPヘッダが見つかりません');
+
+        const totalEntries = view.getUint16(eocdPos + 10, true);
+        let cdOffset = view.getUint32(eocdPos + 16, true);
+
+        for (let idx = 0; idx < totalEntries; idx++) {
+          if (view.getUint32(cdOffset, true) !== 0x02014b50) break;
+          const method = view.getUint16(cdOffset + 10, true);
+          const compSize = view.getUint32(cdOffset + 20, true);
+          const nameLen = view.getUint16(cdOffset + 28, true);
+          const extraLen = view.getUint16(cdOffset + 30, true);
+          const commentLen = view.getUint16(cdOffset + 32, true);
+          const localOffset = view.getUint32(cdOffset + 42, true);
+
+          const path = decoder.decode(bytes.subarray(cdOffset + 46, cdOffset + 46 + nameLen));
+          cdOffset += 46 + nameLen + extraLen + commentLen;
+
+          if (path.endsWith('/') || !/\.html?$/i.test(path)) continue;
+          if (view.getUint32(localOffset, true) !== 0x04034b50) continue;
+
+          const dataStart = localOffset + 30 + view.getUint16(localOffset + 26, true) + view.getUint16(localOffset + 28, true);
+          const compData = bytes.subarray(dataStart, dataStart + compSize);
+          const rawBytes = method === 0 ? compData : method === 8 ? await inflateRaw(compData) : null;
+          if (rawBytes) results.push({ path, content: decoder.decode(rawBytes) });
+        }
+        return results;
+      }
+
+      return { createZipBlob, extractHtmlFilesFromZip };
+    })();
+
+    /* ==========================================================================
+       2. 汎用ヘルパー・XSSサニタイザ・統一モーダルエンジン
+       ========================================================================== */
+    const generateId = () => 'ln-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7);
+
+    const escapeHtml = (str) => String(str || '')
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+
+    const escapeDriveQueryStr = (str) => String(str || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+
+    const sanitizeFilename = (name) =>
+      (String(name || '無題のノート').replace(/[\\/:*?"<>|\x00-\x1f]/g, '_').replace(/\s+/g, ' ').trim() || '無題のノート').slice(0, 80);
+
+    const ensureHtmlFilename = (title, id, existing) =>
+      (existing && existing.toLowerCase().endsWith('.html'))
+        ? existing
+        : `${sanitizeFilename(title)}_${id ? id.slice(-5) : Math.random().toString(36).slice(2, 7)}.html`;
+
+    const estimateNoteBytes = (note) =>
+      1450 + (note.title?.length || 0) * 3 + (note.content?.length || 0);
+
+    function formatBytes(bytes) {
+      if (!bytes || bytes < 1024) return `${bytes || 0} B`;
+      if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+      return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+    }
+
+    function formatDate(isoStr) {
+      const d = new Date(isoStr);
+      if (!isoStr || isNaN(d.getTime())) return '-';
+      const p = (n) => String(n).padStart(2, '0');
+      return `${d.getFullYear()}/${p(d.getMonth() + 1)}/${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+    }
+
+    function stripHtmlToText(html) {
+      const tmp = document.createElement('div');
+      tmp.innerHTML = html || '';
+      tmp.querySelectorAll('.loosenote-edit-link-card-btn').forEach(b => b.remove());
+      return (tmp.textContent || tmp.innerText || '').replace(/\s+/g, ' ').trim();
+    }
+
+    function sanitizeHtmlContent(rawHtml) {
+      if (!rawHtml) return '<p></p>';
+      const doc = new DOMParser().parseFromString(rawHtml, 'text/html');
+      const body = doc.body;
+      if (!body) return '<p></p>';
+
+      body.querySelectorAll('script, iframe, object, applet, base, form, meta, link').forEach(n => n.remove());
+      body.querySelectorAll('embed').forEach(embed => {
+        const type = (embed.getAttribute('type') || '').toLowerCase();
+        const src = (embed.getAttribute('src') || '').trim();
+        if (type !== 'application/pdf' || !src.startsWith('data:application/pdf;base64,')) embed.remove();
+      });
+
+      body.querySelectorAll('*').forEach(node => {
+        for (const attr of Array.from(node.attributes)) {
+          const name = attr.name.toLowerCase();
+          const val = attr.value.trim().toLowerCase();
+          if (name.startsWith('on') || (['href', 'src', 'action', 'formaction'].includes(name) && /^(javascript|vbscript):/.test(val))) {
+            node.removeAttribute(attr.name);
+          }
+        }
+      });
+      return body.innerHTML.trim() || '<p></p>';
+    }
+
+    function showToast(message, type = 'info') {
+      const colors = { success: '#16a34a', error: '#dc2626', warning: '#d97706', info: '#1e293b' };
+      const toast = document.createElement('div');
+      toast.style.cssText = `pointer-events:auto;padding:11px 14px;border-radius:12px;background:${colors[type] || colors.info};color:#fff;font-size:12px;font-weight:500;box-shadow:0 10px 15px -3px rgba(0,0,0,0.18);opacity:0;transform:translateY(8px);transition:all 0.2s;`;
+      toast.textContent = message;
+      el.toastContainer.appendChild(toast);
+      requestAnimationFrame(() => { toast.style.opacity = '1'; toast.style.transform = 'translateY(0)'; });
+      setTimeout(() => {
+        toast.style.opacity = '0';
+        setTimeout(() => toast.remove(), 220);
+      }, 3400);
+    }
+
+    function openDialog({ title, message = '', bodyHtml = '', leftBtn = null, rightBtns = [], onSetup = null }) {
+      return new Promise((resolve) => {
+        el.modalTitle.textContent = title;
+        el.modalMessage.textContent = message;
+        el.modalMessage.classList.toggle('hidden', !message);
+        el.modalBody.innerHTML = bodyHtml;
+        el.modalBody.classList.toggle('hidden', !bodyHtml);
+
+        const close = (result) => {
+          el.customModal.classList.add('hidden');
+          el.modalBody.innerHTML = '';
+          el.modalActions.innerHTML = '';
+          document.removeEventListener('keydown', onKeyDown);
+          resolve(result);
+        };
+
+        const renderBtn = (cfg) => {
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = `btn ${cfg.cls || 'btn-muted'}`;
+          btn.style.padding = '8px 14px';
+          btn.textContent = cfg.label;
+          btn.onclick = () => {
+            if (cfg.onClick) cfg.onClick(close);
+            else close(cfg.value);
+          };
+          return btn;
+        };
+
+        el.modalActions.innerHTML = '';
+        const leftWrap = document.createElement('div');
+        if (leftBtn) leftWrap.appendChild(renderBtn(leftBtn));
+        const rightWrap = document.createElement('div');
+        rightWrap.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;margin-left:auto;';
+        rightBtns.forEach(b => rightWrap.appendChild(renderBtn(b)));
+        el.modalActions.append(leftWrap, rightWrap);
+
+        const onKeyDown = (e) => {
+          if (e.key === 'Escape') { e.stopPropagation(); close(null); }
+        };
+        document.addEventListener('keydown', onKeyDown);
+
+        el.customModal.classList.remove('hidden');
+        if (onSetup) onSetup(close, el.modalBody);
+      });
+    }
+
+    const showConfirmModal = ({ title, message, confirmText = 'OK', isDanger = false }) =>
+      openDialog({
+        title, message,
+        rightBtns: [
+          { label: 'キャンセル', cls: 'btn-muted', value: false },
+          { label: confirmText, cls: isDanger ? 'btn-danger' : 'btn-brand', value: true }
+        ]
+      });
+
+    function showGdriveSettingsModal() {
+      const originUrl = window.location.origin;
+      return openDialog({
+        title: '⚙️ Google Drive API 連携設定',
+        message: 'Google Cloud Console で取得した「OAuth クライアントID」を入力すると、PC・スマホのどちらからでも Google ドライブへ直接同期できます。',
+        bodyHtml: `
+          <div style="display:flex;flex-direction:column;gap:12px;">
+            <div style="padding:10px 12px;border-radius:10px;background:var(--sky-50);border:1px solid var(--border);font-size:11px;color:var(--text-sub);line-height:1.5;">
+              <strong>📌 Google Cloud「承認済みの JavaScript 生成元」登録用URL：</strong><br>
+              <div style="display:flex;align-items:center;gap:6px;margin-top:4px;">
+                <code style="flex:1;padding:4px 8px;background:var(--bg-surface);border-radius:6px;font-family:monospace;overflow-x:auto;">${escapeHtml(originUrl)}</code>
+                <button type="button" id="dlg-copy-origin-btn" class="btn btn-surface" style="padding:4px 8px;font-size:11px;flex-shrink:0;">コピー</button>
+              </div>
+            </div>
+            <div>
+              <label class="field-label">Google OAuth クライアントID <span style="color:#ef4444;">*</span></label>
+              <input id="dlg-gd-client-id" class="field-input" value="${escapeHtml(state.gdriveClientId)}" placeholder="1234567890-xxxx.apps.googleusercontent.com">
+            </div>
+            <div>
+              <label class="field-label">Googleドライブ上の保存フォルダ名</label>
+              <input id="dlg-gd-folder" class="field-input" value="${escapeHtml(state.gdriveFolderName)}" placeholder="LooseNote_Data">
+            </div>
+          </div>`,
+        leftBtn: state.gdriveToken ? { label: 'ログアウト', cls: 'btn-danger', value: { action: 'logout' } } : null,
+        onSetup(close, body) {
+          const idInp = body.querySelector('#dlg-gd-client-id');
+          const copyBtn = body.querySelector('#dlg-copy-origin-btn');
+          copyBtn.onclick = async () => {
+            try {
+              await navigator.clipboard.writeText(originUrl);
+              showToast('URLをクリップボードにコピーしました', 'success');
+            } catch { showToast(originUrl, 'info'); }
+          };
+          setTimeout(() => idInp.focus(), 30);
+        },
+        rightBtns: [
+          { label: 'キャンセル', cls: 'btn-muted', value: null },
+          {
+            label: '保存して接続', cls: 'btn-sky',
+            onClick(close) {
+              const clientId = document.getElementById('dlg-gd-client-id').value.trim();
+              const folderName = sanitizeFilename(document.getElementById('dlg-gd-folder').value.trim() || 'LooseNote_Data');
+              if (!clientId) return showToast('Google OAuth クライアントIDを入力してください', 'warning');
+              close({ action: 'save', clientId, folderName });
+            }
+          }
+        ]
+      });
+    }
+
+    const showLargeFileDecisionModal = (file) =>
+      openDialog({
+        title: `大容量ファイル（${formatBytes(file.size)}）の扱い方`,
+        message: `「${file.name}」は10MBを超えています。\nHTML内に直接埋め込むとデータ量が約${formatBytes(Math.round(file.size * 1.33))}に膨らみ、スマホやブラウザの動作が重くなる原因になります。\n\nGoogleドライブの別フォルダに保管し、ノートには「リンク運用カード」を挿入しますか？`,
+        rightBtns: [
+          { label: 'キャンセル', cls: 'btn-muted', value: 'cancel' },
+          { label: 'そのまま埋め込む', cls: 'btn-surface', value: 'embed' },
+          { label: '🔗 リンク運用カードを作成（推奨）', cls: 'btn-sky', value: 'link' }
+        ]
+      });
+
+    function buildLinkOperationCardHtml({ filename, fileSizeText = '', url = '', memo = '' }) {
+      const safeName = escapeHtml(filename || '未指定ファイル');
+      const safeSize = escapeHtml(fileSizeText || '');
+      const cleanUrl = (url || '').trim();
+      const safeUrl = escapeHtml(cleanUrl);
+      const cleanMemo = (memo || '').trim();
+
+      const sizeBadge = safeSize ? ` <span style="color:#64748b;font-weight:normal;">(${safeSize})</span>` : '';
+      const linkPart = cleanUrl
+        ? `<a href="${safeUrl}" target="_blank" rel="noopener noreferrer" style="color:#0284c7;text-decoration:underline;word-break:break-all;">${safeUrl}</a>`
+        : `<span style="color:#64748b;font-style:italic;">（右上の「✎ 編集」ボタンからGoogleドライブの共有URLを設定できます）</span>`;
+      const memoHtml = cleanMemo
+        ? escapeHtml(cleanMemo).replace(/\r?\n/g, '<br>')
+        : '・ここに検索に引っ掛けたいキーワードや要約・結論を記入してください';
+
+      return `<div class="loosenote-link-card" data-filename="${safeName}" data-filesize="${safeSize}" data-url="${safeUrl}" data-memo="${escapeHtml(cleanMemo)}" style="border:1px solid #bae6fd;border-left:4px solid #0284c7;background:#f0f9ff;border-radius:10px;padding:14px 16px;margin:12px 0;color:#0f172a;">
+        <button type="button" class="loosenote-edit-link-card-btn" contenteditable="false" title="リンクURLと検索用メモを再編集">✎ 編集</button>
+        <div style="font-weight:700;font-size:13px;color:#0369a1;margin-bottom:6px;">☁️ 外部ストレージ保管ファイル（リンク運用）</div>
+        <div style="font-size:13px;margin-bottom:6px;"><strong>ファイル名：</strong>${safeName}${sizeBadge}</div>
+        <div style="font-size:13px;margin-bottom:8px;"><strong>Googleドライブリンク：</strong>${linkPart}</div>
+        <div style="font-size:12px;color:#334155;background:rgba(255,255,255,0.88);padding:8px 10px;border-radius:6px;border:1px solid #e0f2fe;">
+          <strong>🔍 検索用メモ・目次：</strong><br>${memoHtml}
+        </div>
+      </div><p></p>`;
+    }
+
+    const showLinkCardModal = ({ modalTitle = 'Googleドライブリンク運用カードを挿入', confirmLabel = 'カードを挿入', initialFilename = '', initialUrl = '', initialMemo = '' } = {}) =>
+      openDialog({
+        title: modalTitle,
+        message: '10MB超のPDF・動画などはGoogleドライブの別フォルダへ保管し、共有URLと検索用キーワードをカードとして記録します。',
+        bodyHtml: `
+          <div style="display:flex;flex-direction:column;gap:10px;">
+            <div><label class="field-label">対象ファイル名 <span style="color:#ef4444;">*</span></label>
+              <input id="dlg-link-name" class="field-input" value="${escapeHtml(initialFilename)}" placeholder="例: 2026_製品カタログ_45MB.pdf"></div>
+            <div><label class="field-label">Googleドライブ等の共有リンクURL（後から記入も可）</label>
+              <input id="dlg-link-url" type="url" class="field-input" value="${escapeHtml(initialUrl)}" placeholder="https://drive.google.com/..."></div>
+            <div><label class="field-label">検索用メモ・要約（任意）</label>
+              <input id="dlg-link-memo" class="field-input" value="${escapeHtml(initialMemo)}" placeholder="例: 新モデル仕様一覧、P.14スペック表参照"></div>
+          </div>`,
+        onSetup(close, body) {
+          const nameIn = body.querySelector('#dlg-link-name');
+          setTimeout(() => (initialFilename ? body.querySelector('#dlg-link-url') : nameIn).focus(), 30);
+          body.querySelectorAll('input').forEach(inp => inp.onkeydown = (e) => {
+            if (e.key === 'Enter') {
+              const filename = nameIn.value.trim();
+              if (!filename) return showToast('対象ファイル名を入力してください', 'warning');
+              close({ filename, url: body.querySelector('#dlg-link-url').value.trim(), memo: body.querySelector('#dlg-link-memo').value.trim() });
+            }
+          });
+        },
+        rightBtns: [
+          { label: 'キャンセル', cls: 'btn-muted', value: null },
+          {
+            label: confirmLabel, cls: 'btn-sky',
+            onClick(close) {
+              const filename = document.getElementById('dlg-link-name').value.trim();
+              if (!filename) return showToast('対象ファイル名を入力してください', 'warning');
+              close({
+                filename,
+                url: document.getElementById('dlg-link-url').value.trim(),
+                memo: document.getElementById('dlg-link-memo').value.trim()
+              });
+            }
+          }
+        ]
+      });
+
+    function showNotebookModal({ title = 'ノートブック・スタック設定', initialNotebook = '', initialStack = '', isEdit = false } = {}) {
+      const stacks = Array.from(new Set(Array.from(getAllNotebooksMap().values()).map(n => n.stack).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'ja'));
+      return openDialog({
+        title,
+        message: 'ノートブック名と、親グループとなるスタック名（任意）を指定してください。',
+        bodyHtml: `
+          <div style="display:flex;flex-direction:column;gap:10px;">
+            <div><label class="field-label">ノートブック名 <span style="color:#ef4444;">*</span></label>
+              <input id="dlg-nb-name" class="field-input" value="${escapeHtml(initialNotebook)}" placeholder="例: 仕事メモ、レシピ、読書記録"></div>
+            <div><label class="field-label">スタック名（任意・親グループ）</label>
+              <input id="dlg-nb-stack" list="dlg-stacks-list" class="field-input" value="${escapeHtml(initialStack)}" placeholder="例: プロジェクト、プライベート（空欄で独立）">
+              <datalist id="dlg-stacks-list">${stacks.map(s => `<option value="${escapeHtml(s)}">`).join('')}</datalist></div>
+          </div>`,
+        leftBtn: (isEdit && initialNotebook) ? { label: '🗑️ ノートブックを削除', cls: 'btn-danger', value: { action: 'delete' } } : null,
+        onSetup(close, body) {
+          const nbIn = body.querySelector('#dlg-nb-name');
+          setTimeout(() => nbIn.focus(), 30);
+          body.querySelectorAll('input').forEach(inp => inp.onkeydown = (e) => {
+            if (e.key === 'Enter') {
+              const notebook = nbIn.value.trim();
+              if (!notebook) return showToast('ノートブック名を入力してください', 'warning');
+              close({ action: 'save', notebook, stack: body.querySelector('#dlg-nb-stack').value.trim() });
+            }
+          });
+        },
+        rightBtns: [
+          { label: 'キャンセル', cls: 'btn-muted', value: null },
+          {
+            label: '保存', cls: 'btn-brand',
+            onClick(close) {
+              const notebook = document.getElementById('dlg-nb-name').value.trim();
+              if (!notebook) return showToast('ノートブック名を入力してください', 'warning');
+              close({ action: 'save', notebook, stack: document.getElementById('dlg-nb-stack').value.trim() });
+            }
+          }
+        ]
+      });
+    }
+
+    function showStackModal(stackName) {
+      const stacks = Array.from(new Set(Array.from(getAllNotebooksMap().values()).map(n => n.stack).filter(s => s && s !== stackName))).sort((a, b) => a.localeCompare(b, 'ja'));
+      return openDialog({
+        title: 'スタックの編集・解除',
+        message: 'スタック名の変更、またはスタックの解除ができます。\n（※解除しても中のノートブックやノートは削除されず独立したノートブックに戻ります）',
+        bodyHtml: `
+          <div><label class="field-label">スタック名</label>
+            <input id="dlg-stack-name" list="dlg-other-stacks" class="field-input" value="${escapeHtml(stackName)}">
+            <datalist id="dlg-other-stacks">${stacks.map(s => `<option value="${escapeHtml(s)}">`).join('')}</datalist></div>`,
+        leftBtn: { label: '🔓 スタックを解除', cls: 'btn-danger', value: { action: 'ungroup' } },
+        onSetup(close, body) {
+          const inp = body.querySelector('#dlg-stack-name');
+          setTimeout(() => { inp.focus(); inp.select(); }, 30);
+          inp.onkeydown = (e) => {
+            if (e.key === 'Enter') {
+              const newStack = inp.value.trim();
+              if (!newStack) return showToast('新しいスタック名を入力するか「🔓 スタックを解除」を押してください', 'warning');
+              close({ action: 'rename', newStack });
+            }
+          };
+        },
+        rightBtns: [
+          { label: 'キャンセル', cls: 'btn-muted', value: null },
+          {
+            label: '名前を変更', cls: 'btn-brand',
+            onClick(close) {
+              const newStack = document.getElementById('dlg-stack-name').value.trim();
+              if (!newStack) return showToast('新しいスタック名を入力するか「🔓 スタックを解除」を押してください', 'warning');
+              close({ action: 'rename', newStack });
+            }
+          }
+        ]
+      });
+    }
+
+    function showBulkActionModal(mode, count) {
+      if (mode === 'move') {
+        const sorted = Array.from(getAllNotebooksMap().values()).sort((a, b) =>
+          (a.stack ? `${a.stack}/${a.name}` : a.name).localeCompare(b.stack ? `${b.stack}/${b.name}` : b.name, 'ja')
+        );
+        return openDialog({
+          title: `選択中 ${count} 件のノートを移動`,
+          message: '移動先のノートブックを選択してください。',
+          bodyHtml: `<select id="dlg-bulk-nb" class="field-input">
+            <option value="">📥 未分類 (インボックス)</option>
+            ${sorted.map(nb => `<option value="${escapeHtml(nb.name)}">${escapeHtml(nb.stack ? `${nb.stack} / ${nb.name}` : nb.name)}</option>`).join('')}
+          </select>`,
+          rightBtns: [
+            { label: 'キャンセル', cls: 'btn-muted', value: null },
+            { label: '適用する', cls: 'btn-brand', onClick: (close) => close(document.getElementById('dlg-bulk-nb').value) }
+          ]
+        });
+      }
+      return openDialog({
+        title: `選択中 ${count} 件のノートにタグを追加`,
+        message: 'すべての選択ノートに一括付与するタグ名を入力してください。',
+        bodyHtml: `<input id="dlg-bulk-tag" class="field-input" placeholder="例: 確認済み、2026資料">`,
+        onSetup(close, body) {
+          const inp = body.querySelector('#dlg-bulk-tag');
+          setTimeout(() => inp.focus(), 30);
+          inp.onkeydown = (e) => {
+            if (e.key === 'Enter') {
+              const tag = inp.value.trim().replace(/^#+/, '');
+              if (!tag) return showToast('タグ名を入力してください', 'warning');
+              close(tag);
+            }
+          };
+        },
+        rightBtns: [
+          { label: 'キャンセル', cls: 'btn-muted', value: null },
+          {
+            label: '適用する', cls: 'btn-brand',
+            onClick(close) {
+              const tag = document.getElementById('dlg-bulk-tag').value.trim().replace(/^#+/, '');
+              if (!tag) return showToast('タグ名を入力してください', 'warning');
+              close(tag);
+            }
+          }
+        ]
+      });
+    }
+
+    function toDateTimeLocalValue(isoStr) {
+      const d = new Date(isoStr || Date.now());
+      if (isNaN(d.getTime())) return '';
+      const p = (n) => String(n).padStart(2, '0');
+      return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+    }
+
+    function showEditCreatedDateModal(currentIso) {
+      const initialVal = toDateTimeLocalValue(currentIso);
+      return openDialog({
+        title: '作成日時の変更',
+        message: 'ノートの作成日時を任意の日時に変更できます（過去資料の整理や時系列並べ替えに便利です）。',
+        bodyHtml: `
+          <div>
+            <label class="field-label">作成日時</label>
+            <input id="dlg-created-dt" type="datetime-local" class="field-input" value="${escapeHtml(initialVal)}">
+          </div>`,
+        onSetup(close, body) {
+          const inp = body.querySelector('#dlg-created-dt');
+          setTimeout(() => inp.focus(), 30);
+          inp.onkeydown = (e) => {
+            if (e.key === 'Enter' && inp.value) {
+              const parsed = new Date(inp.value);
+              if (!isNaN(parsed.getTime())) close(parsed.toISOString());
+            }
+          };
+        },
+        rightBtns: [
+          { label: 'キャンセル', cls: 'btn-muted', value: null },
+          {
+            label: '変更する', cls: 'btn-brand',
+            onClick(close) {
+              const val = document.getElementById('dlg-created-dt').value;
+              if (!val) return showToast('有効な日時を入力してください', 'warning');
+              const parsed = new Date(val);
+              if (isNaN(parsed.getTime())) return showToast('日時の形式が正しくありません', 'warning');
+              close(parsed.toISOString());
+            }
+          }
+        ]
+      });
+    }
+
+    function buildNoteLinkHtml(targetNote) {
+      const safeId = escapeHtml(targetNote.id);
+      const safeTitle = escapeHtml(targetNote.title || '無題のノート');
+      return `<a href="#note-id:${safeId}" data-note-link-id="${safeId}" class="loosenote-internal-link" contenteditable="false">📄 ${safeTitle}</a>&nbsp;`;
+    }
+
+    function showNoteLinkPickerModal() {
+      const candidates = state.notes
+        .filter(n => !n.trashed && n.id !== state.activeNoteId)
+        .sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+
+      if (!candidates.length) {
+        showToast('リンク先に指定できる他のノートがありません', 'warning');
+        return Promise.resolve(null);
+      }
+
+      return openDialog({
+        title: 'ノート間リンクを挿入',
+        message: 'リンク先にしたいノートを選択してください（本文中で「[[」と入力しても素早く呼び出せます）。',
+        bodyHtml: `
+          <div style="display:flex;flex-direction:column;gap:8px;">
+            <input id="dlg-notelink-search" class="field-input" placeholder="ノート名・ノートブック名で絞り込み...">
+            <div id="dlg-notelink-list" style="max-height:240px;overflow-y:auto;border:1px solid var(--border);border-radius:10px;padding:4px;display:flex;flex-direction:column;gap:2px;"></div>
+          </div>`,
+        onSetup(close, body) {
+          const searchInp = body.querySelector('#dlg-notelink-search');
+          const listEl = body.querySelector('#dlg-notelink-list');
+
+          const renderCandidates = (q = '') => {
+            const kw = q.trim().toLowerCase();
+            const filtered = kw
+              ? candidates.filter(n => `${n.title || ''} ${n.notebook || ''} ${n.stack || ''}`.toLowerCase().includes(kw))
+              : candidates;
+
+            if (!filtered.length) {
+              listEl.innerHTML = `<div style="padding:16px;text-align:center;font-size:12px;color:var(--text-faint);">一致するノートがありません</div>`;
+              return;
+            }
+            listEl.innerHTML = filtered.slice(0, 50).map(n => `
+              <button type="button" data-pick-note-id="${escapeHtml(n.id)}" class="wiki-link-item">
+                <span class="truncate" style="font-weight:600;">📄 ${escapeHtml(n.title || '無題のノート')}</span>
+                ${n.notebook ? `<span class="badge badge-muted truncate" style="max-width:110px;flex-shrink:0;">${escapeHtml(n.notebook)}</span>` : ''}
+              </button>`).join('');
+          };
+
+          renderCandidates();
+          setTimeout(() => searchInp.focus(), 30);
+          searchInp.oninput = () => renderCandidates(searchInp.value);
+          listEl.onclick = (e) => {
+            const btn = e.target.closest('[data-pick-note-id]');
+            if (btn) {
+              const target = candidates.find(n => n.id === btn.dataset.pickNoteId);
+              if (target) close(target);
+            }
+          };
+        },
+        rightBtns: [{ label: 'キャンセル', cls: 'btn-muted', value: null }]
+      });
+    }
+
+    /* ==========================================================================
+       3. 1ノート＝1自己完結型HTML シリアライズ＆パース
+       ========================================================================== */
+    function serializeNoteToHTML(note) {
+      const title = escapeHtml(note.title || '無題のノート');
+      const metaLine = [
+        note.stack ? `スタック: ${escapeHtml(note.stack)}` : '',
+        note.notebook ? `ノートブック: ${escapeHtml(note.notebook)}` : '',
+        `作成: ${formatDate(note.createdAt)}`,
+        `更新: ${formatDate(note.updatedAt)}`,
+        note.tags?.length ? `タグ: ${note.tags.map(t => '#' + escapeHtml(t)).join(' ')}` : ''
+      ].filter(Boolean).join('  |  ');
+
+      return `<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${title}</title>
+  <meta name="generator" content="LooseNote">
+  <meta name="loosenote-id" content="${escapeHtml(note.id)}">
+  <meta name="loosenote-created" content="${escapeHtml(note.createdAt)}">
+  <meta name="loosenote-updated" content="${escapeHtml(note.updatedAt)}">
+  <meta name="loosenote-tags" content="${escapeHtml((note.tags || []).join(','))}">
+  <meta name="loosenote-pinned" content="${note.pinned ? 'true' : 'false'}">
+  <meta name="loosenote-trashed" content="${note.trashed ? 'true' : 'false'}">
+  <meta name="loosenote-stack" content="${escapeHtml(note.stack || '')}">
+  <meta name="loosenote-notebook" content="${escapeHtml(note.notebook || '')}">
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Kaku Gothic ProN", "Noto Sans JP", sans-serif; line-height: 1.75; color: #1c1917; background: #fafaf9; max-width: 820px; margin: 2rem auto; padding: 2rem; }
+    .loosenote-header { border-bottom: 1px solid #e7e5e4; padding-bottom: 1rem; margin-bottom: 1.5rem; }
+    .loosenote-header h1 { margin: 0 0 0.4rem 0; font-size: 1.75rem; }
+    .loosenote-meta { font-size: 0.8rem; color: #78716c; }
+    .loosenote-edit-link-card-btn { display: none; }
+    a.loosenote-internal-link { display: inline-flex; align-items: center; gap: 4px; padding: 1px 8px; border-radius: 6px; background: #f0fdf4; color: #15803d; border: 1px solid #bbf7d0; text-decoration: none; font-weight: 600; font-size: 0.92em; }
+    img { max-width: 100%; height: auto; border-radius: 8px; }
+    pre { background: #f5f5f4; padding: 1rem; border-radius: 8px; overflow-x: auto; }
+    blockquote { border-left: 4px solid #22c55e; margin: 1rem 0; padding-left: 1rem; color: #57534e; }
+    table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+    th, td { border: 1px solid #d6d3d1; padding: 0.5rem; }
+  </style>
+</head>
+<body>
+  <header class="loosenote-header">
+    <h1>${title}</h1>
+    <div class="loosenote-meta">${metaLine}</div>
+  </header>
+  <article id="loosenote-content">
+${note.content || '<p></p>'}
+  </article>
+</body>
+</html>`;
+    }
+
+    function parseHTMLToNote(htmlString, filename = '', folderParts = [], gdriveFileId = '') {
+      const doc = new DOMParser().parseFromString(htmlString, 'text/html');
+      const getMeta = (name) => doc.querySelector(`meta[name="${name}"]`)?.getAttribute('content') || '';
+
+      const id = getMeta('loosenote-id') || generateId();
+      const title = doc.querySelector('title')?.textContent?.trim() || doc.querySelector('h1')?.textContent?.trim() || filename.replace(/\.html?$/i, '') || '無題のノート';
+      const now = new Date().toISOString();
+      const createdAt = getMeta('loosenote-created') || now;
+      const updatedAt = getMeta('loosenote-updated') || createdAt;
+      const tags = getMeta('loosenote-tags').split(',').map(t => t.trim()).filter(Boolean);
+      const pinned = getMeta('loosenote-pinned') === 'true';
+      let trashed = getMeta('loosenote-trashed') === 'true';
+      let stack = getMeta('loosenote-stack').trim();
+      let notebook = getMeta('loosenote-notebook').trim();
+
+      if (folderParts[0] === '_Trash') {
+        trashed = true;
+      } else if (!notebook && folderParts.length >= 2) {
+        stack = folderParts[folderParts.length - 2];
+        notebook = folderParts[folderParts.length - 1];
+      } else if (!notebook && folderParts.length === 1) {
+        notebook = folderParts[0];
+      }
+
+      const article = doc.querySelector('#loosenote-content');
+      let rawContent = '';
+      if (article) {
+        rawContent = article.innerHTML.trim();
+      } else if (doc.body) {
+        const clone = doc.body.cloneNode(true);
+        clone.querySelectorAll('script, style').forEach(s => s.remove());
+        rawContent = clone.innerHTML.trim();
+      } else {
+        rawContent = `<p>${escapeHtml(htmlString)}</p>`;
+      }
+
+      const content = sanitizeHtmlContent(rawContent);
+      return {
+        id, title, content,
+        plainText: stripHtmlToText(content),
+        tags, pinned, trashed, stack, notebook,
+        createdAt, updatedAt,
+        filename: ensureHtmlFilename(title, id, filename),
+        gdriveFileId: gdriveFileId || '',
+        size: new Blob([htmlString]).size
+      };
+    }
+
+    /* ==========================================================================
+       4. IndexedDB ローカルキャッシュ & Google Drive REST API 直接連携
+       ========================================================================== */
+    const DB_NAME = 'LooseNoteCloudDB';
+    let dbPromise = null;
+    let driveWriteQueue = Promise.resolve();
+    let gisScriptPromise = null;
+
+    function openDB() {
+      if (!dbPromise) {
+        dbPromise = new Promise((resolve, reject) => {
+          const req = indexedDB.open(DB_NAME, 1);
+          req.onupgradeneeded = (e) => {
+            const db = e.target.result;
+            if (!db.objectStoreNames.contains('notes')) db.createObjectStore('notes', { keyPath: 'id' });
+            if (!db.objectStoreNames.contains('meta')) db.createObjectStore('meta', { keyPath: 'key' });
+          };
+          req.onsuccess = () => resolve(req.result);
+          req.onerror = () => { dbPromise = null; reject(req.error); };
+        });
+      }
+      return dbPromise;
+    }
+
+    async function saveSingleNoteToDB(note) {
+      try {
+        const db = await openDB();
+        const tx = db.transaction(['notes', 'meta'], 'readwrite');
+        tx.objectStore('notes').put(note);
+        tx.objectStore('meta').put({ key: 'notebooks', value: state.notebooks });
+        tx.objectStore('meta').put({ key: 'initialized', value: true });
+      } catch (err) { console.error('IndexedDB差分保存エラー:', err); }
+    }
+
+    async function deleteSingleNoteFromDB(noteId) {
+      try {
+        const db = await openDB();
+        const tx = db.transaction(['notes'], 'readwrite');
+        tx.objectStore('notes').delete(noteId);
+      } catch (err) { console.error('IndexedDB削除エラー:', err); }
+    }
+
+    async function saveAllStateToDB() {
+      try {
+        const db = await openDB();
+        const tx = db.transaction(['notes', 'meta'], 'readwrite');
+        const noteStore = tx.objectStore('notes');
+        noteStore.clear();
+        for (const note of state.notes) noteStore.put(note);
+        tx.objectStore('meta').put({ key: 'notebooks', value: state.notebooks });
+        tx.objectStore('meta').put({ key: 'initialized', value: true });
+      } catch (err) { console.error('IndexedDB一括保存エラー:', err); }
+    }
+
+    async function loadStateFromDB() {
+      try {
+        const db = await openDB();
+        const tx = db.transaction(['notes', 'meta'], 'readonly');
+        const wrap = (req) => new Promise(res => { req.onsuccess = () => res(req.result); req.onerror = () => res(null); });
+        const [notes, nbMeta, initMeta] = await Promise.all([
+          wrap(tx.objectStore('notes').getAll()),
+          wrap(tx.objectStore('meta').get('notebooks')),
+          wrap(tx.objectStore('meta').get('initialized'))
+        ]);
+        return { notes: notes || [], notebooks: nbMeta?.value || [], initialized: Boolean(initMeta?.value) };
+      } catch { return { notes: [], notebooks: [], initialized: false }; }
+    }
+
+    // Google Identity Services (GIS) スクリプトの動的読み込み
+    function loadGoogleIdentityScript() {
+      if (window.google?.accounts?.oauth2) return Promise.resolve();
+      if (!gisScriptPromise) {
+        gisScriptPromise = new Promise((resolve, reject) => {
+          const script = document.createElement('script');
+          script.src = 'https://accounts.google.com/gsi/client';
+          script.async = true;
+          script.defer = true;
+          script.onload = resolve;
+          script.onerror = () => {
+            gisScriptPromise = null;
+            reject(new Error('Google認証ライブラリの読み込みに失敗しました（ネット接続を確認してください）'));
+          };
+          document.head.appendChild(script);
+        });
+      }
+      return gisScriptPromise;
+    }
+
+    function updateGdriveStatusUI() {
+      const connected = Boolean(state.gdriveToken && Date.now() < state.gdriveTokenExpiry);
+      if (connected) {
+        el.storageBadge.textContent = 'Googleドライブ同期中';
+        el.storageBadge.className = 'badge badge-brand';
+        el.storageFolderName.textContent = `☁️ ${state.gdriveFolderName}`;
+        el.connectGdriveBtnText.textContent = '同期中（再認証）';
+        el.syncGdriveNowBtn.classList.remove('hidden');
+      } else if (state.gdriveClientId) {
+        el.storageBadge.textContent = '未ログイン';
+        el.storageBadge.className = 'badge badge-sky';
+        el.storageFolderName.textContent = `☁️ ${state.gdriveFolderName}（接続待機）`;
+        el.connectGdriveBtnText.textContent = 'Googleドライブに接続';
+        el.syncGdriveNowBtn.classList.add('hidden');
+      } else {
+        el.storageBadge.textContent = '未設定（端末内保存）';
+        el.storageBadge.className = 'badge badge-amber';
+        el.storageFolderName.textContent = '⚙️からクライアントIDを設定';
+        el.connectGdriveBtnText.textContent = 'Googleドライブに接続';
+        el.syncGdriveNowBtn.classList.add('hidden');
+      }
+    }
+
+    // OAuth アクセストークンの取得（prompt: '' または 'consent'）
+    async function requestGoogleAccessToken(promptMode = '') {
+      if (!state.gdriveClientId) throw new Error('NO_CLIENT_ID');
+      await loadGoogleIdentityScript();
+      return new Promise((resolve, reject) => {
+        const tokenClient = window.google.accounts.oauth2.initTokenClient({
+          client_id: state.gdriveClientId,
+          scope: GDRIVE_SCOPE,
+          callback: (resp) => {
+            if (resp.error) {
+              reject(new Error(resp.error_description || resp.error));
+            } else {
+              state.gdriveToken = resp.access_token;
+              state.gdriveTokenExpiry = Date.now() + (Number(resp.expires_in || 3500) - 60) * 1000;
+              updateGdriveStatusUI();
+              resolve(resp.access_token);
+            }
+          }
+        });
+        tokenClient.requestAccessToken({ prompt: promptMode });
+      });
+    }
+
+    async function ensureValidGdriveToken(interactive = false) {
+      if (state.gdriveToken && Date.now() < state.gdriveTokenExpiry) return state.gdriveToken;
+      if (!state.gdriveClientId) return null;
+      try {
+        return await requestGoogleAccessToken(interactive ? '' : 'none');
+      } catch {
+        state.gdriveToken = null;
+        updateGdriveStatusUI();
+        return null;
+      }
+    }
+
+    async function gdriveFetch(url, options = {}) {
+      const token = await ensureValidGdriveToken(false);
+      if (!token) throw new Error('AUTH_EXPIRED');
+      const headers = new Headers(options.headers || {});
+      headers.set('Authorization', `Bearer ${token}`);
+      const res = await fetch(url, { ...options, headers });
+      if (res.status === 401) {
+        state.gdriveToken = null;
+        updateGdriveStatusUI();
+        throw new Error('AUTH_EXPIRED');
+      }
+      if (!res.ok) {
+        const errText = await res.text().catch(() => '');
+        throw new Error(`Google Drive API エラー (${res.status}): ${errText.slice(0, 140)}`);
+      }
+      return res;
+    }
+
+    // 指定した親フォルダ直下で名前が一致するフォルダを取得または作成
+    async function getOrCreateDriveFolder(folderName, parentId = 'root') {
+      const cacheKey = `${parentId}/${folderName}`;
+      if (state.gdriveFolderCache.has(cacheKey)) return state.gdriveFolderCache.get(cacheKey);
+
+      const safeName = escapeDriveQueryStr(folderName);
+      const q = `'${parentId}' in parents and name = '${safeName}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+      const searchUrl = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id,name)&pageSize=10`;
+      const searchRes = await gdriveFetch(searchUrl);
+      const searchData = await searchRes.json();
+
+      if (searchData.files && searchData.files.length > 0) {
+        const foundId = searchData.files[0].id;
+        state.gdriveFolderCache.set(cacheKey, foundId);
+        return foundId;
+      }
+
+      const createRes = await gdriveFetch('https://www.googleapis.com/drive/v3/files?fields=id', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: folderName,
+          mimeType: 'application/vnd.google-apps.folder',
+          parents: [parentId]
+        })
+      });
+      const created = await createRes.json();
+      state.gdriveFolderCache.set(cacheKey, created.id);
+      return created.id;
+    }
+
+    // ノート配置先フォルダIDを解決（LooseNote_Data / [Stack] / [Notebook] または _Trash）
+    async function resolveTargetDriveParentId(note) {
+      if (!state.gdriveRootFolderId) {
+        state.gdriveRootFolderId = await getOrCreateDriveFolder(state.gdriveFolderName || 'LooseNote_Data', 'root');
+      }
+      let currentParent = state.gdriveRootFolderId;
+      if (note.trashed) {
+        return await getOrCreateDriveFolder('_Trash', currentParent);
+      }
+      if (note.stack) {
+        currentParent = await getOrCreateDriveFolder(sanitizeFilename(note.stack), currentParent);
+      }
+      if (note.notebook) {
+        currentParent = await getOrCreateDriveFolder(sanitizeFilename(note.notebook), currentParent);
+      }
+      return currentParent;
+    }
+
+    function enqueueDriveTask(taskFn) {
+      driveWriteQueue = driveWriteQueue.then(taskFn).catch(err => {
+        if (err.message === 'AUTH_EXPIRED') {
+          showToast('Googleドライブの認証期限が切れました。「Googleドライブに接続」を押して再認証してください', 'warning');
+        } else {
+          console.error('Google Drive 同期エラー:', err);
+          showToast('Googleドライブへの保存に失敗しました（端末内には保存済みです）', 'error');
+        }
+      });
+      return driveWriteQueue;
+    }
+
+    // 1ノートを Google Drive 上へ新規作成または上書き更新（親フォルダ移動にも対応）
+    function uploadNoteToGoogleDrive(note) {
+      if (!state.gdriveToken || Date.now() >= state.gdriveTokenExpiry) return Promise.resolve();
+      const snapshot = { ...note };
+
+      return enqueueDriveTask(async () => {
+        const parentId = await resolveTargetDriveParentId(snapshot);
+        const filename = ensureHtmlFilename(snapshot.title, snapshot.id, snapshot.filename);
+        note.filename = filename;
+        const htmlContent = serializeNoteToHTML({ ...snapshot, filename });
+        note.size = new Blob([htmlContent]).size;
+
+        const boundary = 'loosenote_boundary_' + Date.now().toString(36);
+        const metadata = { name: filename, mimeType: 'text/html' };
+
+        if (snapshot.gdriveFileId) {
+          // 既存ファイルの親フォルダを確認し、必要なら移動
+          let moveQuery = '';
+          try {
+            const infoRes = await gdriveFetch(`https://www.googleapis.com/drive/v3/files/${snapshot.gdriveFileId}?fields=parents,trashed`);
+            const info = await infoRes.json();
+            if (info.trashed) throw new Error('FILE_TRASHED');
+            const oldParents = (info.parents || []).filter(p => p !== parentId);
+            if (!(info.parents || []).includes(parentId)) {
+              moveQuery = `&addParents=${encodeURIComponent(parentId)}${oldParents.length ? `&removeParents=${encodeURIComponent(oldParents.join(','))}` : ''}`;
+            }
+          } catch {
+            // ファイルがDrive側で消えていた場合は新規作成へフォールバック
+            note.gdriveFileId = '';
+            snapshot.gdriveFileId = '';
+          }
+        }
+
+        if (!snapshot.gdriveFileId) {
+          metadata.parents = [parentId];
+        }
+
+        const multipartBody =
+          `--${boundary}\r\n` +
+          `Content-Type: application/json; charset=UTF-8\r\n\r\n` +
+          `${JSON.stringify(metadata)}\r\n` +
+          `--${boundary}\r\n` +
+          `Content-Type: text/html; charset=UTF-8\r\n\r\n` +
+          `${htmlContent}\r\n` +
+          `--${boundary}--`;
+
+        if (snapshot.gdriveFileId) {
+          const res = await gdriveFetch(
+            `https://www.googleapis.com/upload/drive/v3/files/${snapshot.gdriveFileId}?uploadType=multipart&fields=id${moveQuery}`,
+            {
+              method: 'PATCH',
+              headers: { 'Content-Type': `multipart/related; boundary=${boundary}` },
+              body: multipartBody
+            }
+          );
+          const updated = await res.json();
+          note.gdriveFileId = updated.id;
+        } else {
+          const res = await gdriveFetch(
+            'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id',
+            {
+              method: 'POST',
+              headers: { 'Content-Type': `multipart/related; boundary=${boundary}` },
+              body: multipartBody
+            }
+          );
+          const created = await res.json();
+          note.gdriveFileId = created.id;
+        }
+        await saveSingleNoteToDB(note);
+      });
+    }
+
+    function deleteNoteFromGoogleDrive(gdriveFileId) {
+      if (!gdriveFileId || !state.gdriveToken || Date.now() >= state.gdriveTokenExpiry) return Promise.resolve();
+      return enqueueDriveTask(async () => {
+        try {
+          await gdriveFetch(`https://www.googleapis.com/drive/v3/files/${gdriveFileId}`, { method: 'DELETE' });
+        } catch {}
+      });
+    }
+
+    // 指定フォルダ直下の全アイテムをページネーション込みで取得
+    async function listDriveChildren(parentId) {
+      const items = [];
+      let pageToken = '';
+      do {
+        const q = `'${parentId}' in parents and trashed = false`;
+        const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=nextPageToken,files(id,name,mimeType,modifiedTime)&pageSize=1000${pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : ''}`;
+        const res = await gdriveFetch(url);
+        const data = await res.json();
+        if (data.files) items.push(...data.files);
+        pageToken = data.nextPageToken || '';
+      } while (pageToken);
+      return items;
+    }
+
+    // Google Drive フォルダ配下を再帰走査してHTMLファイルメタ情報一覧を収集
+    async function scanDriveHtmlFilesRecursively(folderId, folderParts = []) {
+      const children = await listDriveChildren(folderId);
+      const htmlFiles = [];
+      for (const item of children) {
+        if (item.mimeType === 'application/vnd.google-apps.folder') {
+          state.gdriveFolderCache.set(`${folderId}/${item.name}`, item.id);
+          htmlFiles.push(...await scanDriveHtmlFilesRecursively(item.id, [...folderParts, item.name]));
+        } else if (/\.html?$/i.test(item.name)) {
+          htmlFiles.push({ ...item, folderParts });
+        }
+      }
+      return htmlFiles;
+    }
+
+    // PC・スマホ間の双方向同期処理
+    async function syncWithGoogleDrive(isManual = false) {
+      if (state.isGdriveSyncing) return;
+      const token = await ensureValidGdriveToken(false);
+      if (!token) return;
+
+      state.isGdriveSyncing = true;
+      el.syncGdriveIcon?.classList.add('animate-spin');
+
+      try {
+        await flushPendingAutoSave();
+        state.gdriveFolderCache.clear();
+        state.gdriveRootFolderId = await getOrCreateDriveFolder(state.gdriveFolderName || 'LooseNote_Data', 'root');
+
+        const remoteFiles = await scanDriveHtmlFilesRecursively(state.gdriveRootFolderId);
+        const remoteById = new Map(remoteFiles.map(f => [f.id, f]));
+        const localByDriveId = new Map(state.notes.filter(n => n.gdriveFileId).map(n => [n.gdriveFileId, n]));
+
+        let downloadedCount = 0;
+        let uploadedCount = 0;
+        let deletedCount = 0;
+
+        // 1. 他端末で完全削除されたノートの反映（以前はDriveに紐づいていたがDrive上から消えているもの）
+        state.notes = state.notes.filter(n => {
+          if (n.gdriveFileId && !remoteById.has(n.gdriveFileId)) {
+            deletedCount++;
+            return false;
+          }
+          return true;
+        });
+
+        // 2. Drive上のファイルを取り込み・更新比較
+        for (const rf of remoteFiles) {
+          const localMatch = localByDriveId.get(rf.id);
+          if (!localMatch) {
+            // 新規リモートファイル → ダウンロードして追加（ID重複チェック付き）
+            const fileRes = await gdriveFetch(`https://www.googleapis.com/drive/v3/files/${rf.id}?alt=media`);
+            const htmlText = await fileRes.text();
+            const parsed = parseHTMLToNote(htmlText, rf.name, rf.folderParts, rf.id);
+            const sameNoteIdx = state.notes.findIndex(n => n.id === parsed.id);
+            if (sameNoteIdx !== -1) {
+              if (new Date(parsed.updatedAt) >= new Date(state.notes[sameNoteIdx].updatedAt)) {
+                state.notes[sameNoteIdx] = parsed;
+              } else {
+                state.notes[sameNoteIdx].gdriveFileId = rf.id;
+                await uploadNoteToGoogleDrive(state.notes[sameNoteIdx]);
+                uploadedCount++;
+              }
+            } else {
+              state.notes.push(parsed);
+            }
+            downloadedCount++;
+          } else {
+            // 両方に存在 → 更新日時を比較（3秒以上の差があれば新しい方を採用）
+            const remoteMod = new Date(rf.modifiedTime).getTime();
+            const localMod = new Date(localMatch.updatedAt).getTime();
+            if (remoteMod - localMod > 3000) {
+              const fileRes = await gdriveFetch(`https://www.googleapis.com/drive/v3/files/${rf.id}?alt=media`);
+              const htmlText = await fileRes.text();
+              const parsed = parseHTMLToNote(htmlText, rf.name, rf.folderParts, rf.id);
+              const idx = state.notes.findIndex(n => n.id === localMatch.id);
+              if (idx !== -1) state.notes[idx] = parsed;
+              downloadedCount++;
+            } else if (localMod - remoteMod > 3000) {
+              await uploadNoteToGoogleDrive(localMatch);
+              uploadedCount++;
+            }
+          }
+        }
+
+        // 3. まだGoogle Driveへ未アップロードのローカル新規ノートをアップロード
+        for (const note of state.notes) {
+          if (!note.gdriveFileId) {
+            await uploadNoteToGoogleDrive(note);
+            uploadedCount++;
+          }
+        }
+
+        syncNotebooksFromNotes();
+        if (!state.notes.some(n => n.id === state.activeNoteId)) {
+          state.activeNoteId = getFilteredAndSortedNotes()[0]?.id || null;
+        }
+        await saveAllStateToDB();
+        renderAll();
+
+        if (isManual || downloadedCount > 0 || uploadedCount > 0 || deletedCount > 0) {
+          showToast(`Googleドライブ同期完了（取得 ${downloadedCount}件 / 送信 ${uploadedCount}件）`, 'success');
+        }
+      } catch (err) {
+        console.error('Google Drive 双方向同期エラー:', err);
+        showToast('Googleドライブとの同期中にエラーが発生しました', 'error');
+      } finally {
+        state.isGdriveSyncing = false;
+        el.syncGdriveIcon?.classList.remove('animate-spin');
+      }
+    }
+
+    async function connectGoogleDriveFlow() {
+      if (!state.gdriveClientId) {
+        const res = await showGdriveSettingsModal();
+        if (!res || res.action !== 'save') return;
+        state.gdriveClientId = res.clientId;
+        state.gdriveFolderName = res.folderName;
+        localStorage.setItem(LS_CLIENT_ID_KEY, state.gdriveClientId);
+        localStorage.setItem(LS_FOLDER_NAME_KEY, state.gdriveFolderName);
+        updateGdriveStatusUI();
+      }
+      try {
+        await requestGoogleAccessToken('');
+        await syncWithGoogleDrive(true);
+      } catch (err) {
+        console.error('Google認証エラー:', err);
+        showToast('Googleログインがキャンセルされたか、設定を確認してください（⚙️ボタン）', 'warning');
+      }
+    }
+
+    /* ==========================================================================
+       5. Evernote (.enex) パーサー & MD5ハッシュ照合
+       ========================================================================== */
+    function md5Bytes(bytes) {
+      const rotl = (x, c) => (x << c) | (x >>> (32 - c));
+      const s = [
+        7,12,17,22,7,12,17,22,7,12,17,22,7,12,17,22,
+        5,9,14,20,5,9,14,20,5,9,14,20,5,9,14,20,
+        4,11,16,23,4,11,16,23,4,11,16,23,4,11,16,23,
+        6,10,15,21,6,10,15,21,6,10,15,21,6,10,15,21
+      ];
+      const K = Uint32Array.from({ length: 64 }, (_, i) => Math.floor(Math.abs(Math.sin(i + 1)) * 4294967296));
+      const origLen = bytes.length, bitLen = origLen * 8;
+      const totalLen = origLen + 1 + (((56 - (origLen + 1) % 64) + 64) % 64) + 8;
+      const buf = new Uint8Array(totalLen);
+      buf.set(bytes);
+      buf[origLen] = 0x80;
+      const view = new DataView(buf.buffer);
+      view.setUint32(totalLen - 8, bitLen >>> 0, true);
+      view.setUint32(totalLen - 4, Math.floor(bitLen / 4294967296) >>> 0, true);
+
+      let a0 = 0x67452301, b0 = 0xefcdab89, c0 = 0x98badcfe, d0 = 0x10325476;
+      for (let off = 0; off < totalLen; off += 64) {
+        const M = Uint32Array.from({ length: 16 }, (_, j) => view.getUint32(off + j * 4, true));
+        let A = a0, B = b0, C = c0, D = d0;
+        for (let i = 0; i < 64; i++) {
+          let F, g;
+          if (i < 16) { F = (B & C) | (~B & D); g = i; }
+          else if (i < 32) { F = (D & B) | (~D & C); g = (5 * i + 1) % 16; }
+          else if (i < 48) { F = B ^ C ^ D; g = (3 * i + 5) % 16; }
+          else { F = C ^ (B | ~D); g = (7 * i) % 16; }
+          const tmp = D; D = C; C = B;
+          B = (B + rotl((A + F + K[i] + M[g]) >>> 0, s[i])) >>> 0;
+          A = tmp;
+        }
+        a0 = (a0 + A) >>> 0; b0 = (b0 + B) >>> 0; c0 = (c0 + C) >>> 0; d0 = (d0 + D) >>> 0;
+      }
+      const out = new Uint8Array(16);
+      const ov = new DataView(out.buffer);
+      ov.setUint32(0, a0, true); ov.setUint32(4, b0, true); ov.setUint32(8, c0, true); ov.setUint32(12, d0, true);
+      return Array.from(out, b => b.toString(16).padStart(2, '0')).join('');
+    }
+
+    function base64ToUint8Array(b64) {
+      const cleaned = b64.replace(/\s+/g, '');
+      const bin = atob(cleaned);
+      const bytes = Uint8Array.from(bin, ch => ch.charCodeAt(0));
+      return { bytes, cleanedBase64: cleaned };
+    }
+
+    function parseEnexXML(xmlText, defaultNotebookName = '') {
+      const xmlDoc = new DOMParser().parseFromString(xmlText, 'text/xml');
+      const parseTs = (ts) => {
+        if (!ts) return new Date().toISOString();
+        const m = ts.trim().match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z?$/);
+        if (m) return `${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:${m[6]}Z`;
+        const d = new Date(ts);
+        return isNaN(d.getTime()) ? new Date().toISOString() : d.toISOString();
+      };
+
+      return Array.from(xmlDoc.querySelectorAll('note')).map(noteEl => {
+        const title = noteEl.querySelector('title')?.textContent?.trim() || '無題のEvernoteノート';
+        const createdAt = parseTs(noteEl.querySelector('created')?.textContent);
+        const updatedAt = noteEl.querySelector('updated')?.textContent ? parseTs(noteEl.querySelector('updated').textContent) : createdAt;
+        const tags = Array.from(noteEl.querySelectorAll('tag')).map(t => t.textContent?.trim()).filter(Boolean);
+
+        const resourceMap = new Map();
+        noteEl.querySelectorAll('resource').forEach(resEl => {
+          const dataText = resEl.querySelector('data')?.textContent;
+          if (!dataText) return;
+          try {
+            const { bytes, cleanedBase64 } = base64ToUint8Array(dataText);
+            const mime = resEl.querySelector('mime')?.textContent?.trim() || 'application/octet-stream';
+            const filename = (resEl.querySelector('resource-attributes > file-name')?.textContent || resEl.querySelector('file-name')?.textContent || '').trim();
+            resourceMap.set(md5Bytes(bytes), { mime, base64: cleanedBase64, filename });
+          } catch {}
+        });
+
+        const rawEnml = (noteEl.querySelector('content')?.textContent || '')
+          .replace(/<\?xml[\s\S]*?\?>/gi, '').replace(/<!DOCTYPE[\s\S]*?>/gi, '')
+          .replace(/<en-(media|todo)([^>]*?)\/>/gi, '<en-$1$2></en-$1>');
+        const doc = new DOMParser().parseFromString(rawEnml, 'text/html');
+        const enNote = doc.querySelector('en-note') || doc.body;
+        const usedHashes = new Set();
+
+        enNote.querySelectorAll('en-todo').forEach(todo => {
+          const cb = doc.createElement('input');
+          cb.type = 'checkbox';
+          if (todo.getAttribute('checked') === 'true') cb.setAttribute('checked', 'checked');
+          cb.style.marginRight = '6px';
+          todo.replaceWith(cb);
+        });
+
+        const buildMediaNode = (res, hash) => {
+          const dataUrl = `data:${res.mime};base64,${res.base64}`;
+          const fname = res.filename || `attachment_${hash.slice(0, 6)}`;
+          if (res.mime.startsWith('image/')) return `<img src="${dataUrl}" alt="${escapeHtml(fname)}">`;
+          if (res.mime === 'application/pdf') {
+            return `<div style="margin:12px 0;"><div style="padding:10px 14px;border:1px solid #d6d3d1;border-radius:10px;background:#f5f5f4;margin-bottom:6px;font-size:13px;">📄 <strong>${escapeHtml(fname)}</strong> <a href="${dataUrl}" download="${escapeHtml(fname)}" style="margin-left:10px;color:#16a34a;">ダウンロード</a></div><embed src="${dataUrl}" type="application/pdf" width="100%" height="480px" style="border-radius:8px;border:1px solid #e7e5e4;"></div>`;
+          }
+          return `<p>📎 <a href="${dataUrl}" download="${escapeHtml(fname)}">${escapeHtml(fname)} (${escapeHtml(res.mime)})</a></p>`;
+        };
+
+        enNote.querySelectorAll('en-media').forEach(media => {
+          const hash = (media.getAttribute('hash') || '').toLowerCase();
+          const res = resourceMap.get(hash);
+          if (res) {
+            usedHashes.add(hash);
+            const wrap = doc.createElement('div');
+            wrap.innerHTML = buildMediaNode(res, hash);
+            media.replaceWith(...wrap.childNodes);
+          } else {
+            media.remove();
+          }
+        });
+
+        const extra = [];
+        for (const [hash, res] of resourceMap.entries()) {
+          if (!usedHashes.has(hash)) extra.push(buildMediaNode(res, hash));
+        }
+
+        const htmlContent = sanitizeHtmlContent((enNote.innerHTML || '').trim() + (extra.length ? '\n' + extra.join('\n') : ''));
+        const id = generateId();
+        const noteObj = {
+          id, title, content: htmlContent, plainText: stripHtmlToText(htmlContent),
+          tags, pinned: false, trashed: false, stack: '', notebook: defaultNotebookName,
+          createdAt, updatedAt, filename: ensureHtmlFilename(title, id, ''), gdriveFileId: '', size: 0
+        };
+        noteObj.size = new Blob([serializeNoteToHTML(noteObj)]).size;
+        return noteObj;
+      });
+    }
+
+    /* ==========================================================================
+       6. スタック & ノートブック管理
+       ========================================================================== */
+    function getAllNotebooksMap() {
+      const map = new Map();
+      state.notebooks.forEach(nb => { if (nb.name) map.set(nb.name, { name: nb.name, stack: nb.stack || '', count: 0 }); });
+      state.notes.forEach(note => {
+        if (note.trashed || !note.notebook) return;
+        if (!map.has(note.notebook)) map.set(note.notebook, { name: note.notebook, stack: note.stack || '', count: 0 });
+        const entry = map.get(note.notebook);
+        entry.count++;
+        if (note.stack && !entry.stack) entry.stack = note.stack;
+      });
+      return map;
+    }
+
+    function syncNotebooksFromNotes() {
+      state.notebooks = Array.from(getAllNotebooksMap().values()).map(({ name, stack }) => ({ name, stack }));
+    }
+
+    async function createOrUpdateNotebook(oldName, newName, newStack) {
+      if (oldName) {
+        state.notebooks = state.notebooks.map(nb => nb.name === oldName ? { name: newName, stack: newStack } : nb);
+        if (!state.notebooks.some(nb => nb.name === newName)) state.notebooks.push({ name: newName, stack: newStack });
+        for (const note of state.notes) {
+          if (note.notebook === oldName) {
+            note.notebook = newName;
+            note.stack = newStack;
+            note.updatedAt = new Date().toISOString();
+            await uploadNoteToGoogleDrive(note);
+          }
+        }
+        if (state.activeFilter === `notebook:${oldName}`) state.activeFilter = `notebook:${newName}`;
+      } else {
+        const existing = state.notebooks.find(nb => nb.name === newName);
+        if (existing) existing.stack = newStack;
+        else state.notebooks.push({ name: newName, stack: newStack });
+      }
+      await saveAllStateToDB();
+      renderAll();
+    }
+
+    async function deleteNotebook(notebookName) {
+      const targetNotes = state.notes.filter(n => n.notebook === notebookName);
+      state.notebooks = state.notebooks.filter(nb => nb.name !== notebookName);
+      for (const note of targetNotes) {
+        note.notebook = '';
+        note.stack = '';
+        note.updatedAt = new Date().toISOString();
+        await uploadNoteToGoogleDrive(note);
+      }
+      if (state.activeFilter === `notebook:${notebookName}`) state.activeFilter = 'all';
+      await saveAllStateToDB();
+      renderAll();
+      showToast(targetNotes.length ? `ノートブック「${notebookName}」を削除し、${targetNotes.length}件を未分類へ移動しました` : `ノートブック「${notebookName}」を削除しました`, 'info');
+    }
+
+    async function renameOrUngroupStack(oldStackName, newStackName) {
+      state.notebooks = state.notebooks.map(nb => nb.stack === oldStackName ? { ...nb, stack: newStackName } : nb);
+      for (const note of state.notes) {
+        if (note.stack === oldStackName) {
+          note.stack = newStackName;
+          note.updatedAt = new Date().toISOString();
+          await uploadNoteToGoogleDrive(note);
+        }
+      }
+      if (state.activeFilter === `stack:${oldStackName}`) state.activeFilter = newStackName ? `stack:${newStackName}` : 'all';
+      if (state.collapsedStacks.has(oldStackName)) {
+        state.collapsedStacks.delete(oldStackName);
+        if (newStackName) state.collapsedStacks.add(newStackName);
+      }
+      await saveAllStateToDB();
+      renderAll();
+      showToast(newStackName ? `スタック名を「${newStackName}」へ変更しました` : `スタック「${oldStackName}」を解除しました`, 'success');
+    }
+
+    async function moveNoteToNotebook(noteId, targetNotebookName, silent = false) {
+      const note = state.notes.find(n => n.id === noteId);
+      if (!note) return;
+      const nbInfo = targetNotebookName ? getAllNotebooksMap().get(targetNotebookName) : null;
+      note.notebook = targetNotebookName || '';
+      note.stack = nbInfo ? nbInfo.stack : '';
+      note.updatedAt = new Date().toISOString();
+
+      await uploadNoteToGoogleDrive(note);
+      if (!silent) {
+        await saveSingleNoteToDB(note);
+        renderAll();
+        showToast(targetNotebookName ? `「${targetNotebookName}」へ移動しました` : '未分類へ移動しました', 'success');
+      }
+    }
+
+    /* ==========================================================================
+       7. ファイル放り込み処理
+       ========================================================================== */
+    const readFileAsDataURL = (file) => new Promise((res, rej) => {
+      const r = new FileReader(); r.onload = () => res(r.result); r.onerror = () => rej(r.error); r.readAsDataURL(file);
+    });
+
+    function getDefaultTargetLocation() {
+      if (state.activeFilter.startsWith('notebook:')) {
+        const nb = state.activeFilter.slice(9);
+        return { notebook: nb, stack: getAllNotebooksMap().get(nb)?.stack || '' };
+      }
+      if (state.activeFilter.startsWith('stack:')) return { notebook: '', stack: state.activeFilter.slice(6) };
+      return { notebook: '', stack: '' };
+    }
+
+    async function handleDroppedOrSelectedFiles(fileList, embedIntoActive = false) {
+      const files = Array.from(fileList || []);
+      if (!files.length) return;
+
+      await flushPendingAutoSave();
+      let createdCount = 0, embeddedCount = 0, lastCreatedId = null;
+      let showedCustomToast = false;
+      const addNewNote = async (opts) => {
+        const note = buildNewNoteObject(opts);
+        state.notes.unshift(note);
+        await uploadNoteToGoogleDrive(note);
+        lastCreatedId = note.id;
+        createdCount++;
+      };
+
+      for (const file of files) {
+        const lower = file.name.toLowerCase();
+
+        if (lower.endsWith('.enex')) {
+          try {
+            const enexNotes = parseEnexXML(await file.text(), file.name.replace(/\.enex$/i, '').trim() || 'Evernoteインポート');
+            if (enexNotes.length) {
+              state.notes.unshift(...enexNotes);
+              syncNotebooksFromNotes();
+              for (const n of enexNotes) await uploadNoteToGoogleDrive(n);
+              lastCreatedId = enexNotes[0].id;
+              createdCount += enexNotes.length;
+              showedCustomToast = true;
+              showToast(`「${file.name}」から ${enexNotes.length} 件をインポートしました`, 'success');
+            } else {
+              showToast(`「${file.name}」内に有効なノートが見つかりませんでした`, 'warning');
+            }
+          } catch { showToast(`「${file.name}」の読み込みに失敗しました`, 'error'); }
+          continue;
+        }
+
+        if (lower.endsWith('.zip')) {
+          try {
+            const entries = await StandaloneZip.extractHtmlFilesFromZip(await file.arrayBuffer());
+            const zipNotes = entries.map(e => {
+              const parts = e.path.split('/').filter(Boolean);
+              const fname = parts.pop();
+              return parseHTMLToNote(e.content, fname, parts);
+            });
+            if (zipNotes.length) {
+              state.notes.unshift(...zipNotes);
+              syncNotebooksFromNotes();
+              for (const n of zipNotes) await uploadNoteToGoogleDrive(n);
+              lastCreatedId = zipNotes[0].id;
+              createdCount += zipNotes.length;
+              showedCustomToast = true;
+              showToast(`ZIPから ${zipNotes.length} 件のノートを復元しました`, 'success');
+            } else {
+              showToast('ZIP内にHTMLノートが見つかりませんでした', 'warning');
+            }
+          } catch { showToast(`ZIPファイル「${file.name}」の展開に失敗しました`, 'error'); }
+          continue;
+        }
+
+        if (lower.endsWith('.html') || lower.endsWith('.htm')) {
+          const note = parseHTMLToNote(await file.text(), file.name);
+          const loc = getDefaultTargetLocation();
+          if (!note.notebook && loc.notebook) { note.notebook = loc.notebook; note.stack = loc.stack; }
+          state.notes.unshift(note);
+          syncNotebooksFromNotes();
+          await uploadNoteToGoogleDrive(note);
+          lastCreatedId = note.id;
+          createdCount++;
+          continue;
+        }
+
+        if (file.type.startsWith('text/') || /\.(txt|md|markdown|csv|json|log)$/i.test(lower)) {
+          const paragraphs = (await file.text()).split(/\r?\n/).map(l => `<p>${l ? escapeHtml(l) : '<br>'}</p>`).join('');
+          await addNewNote({ title: file.name.replace(/\.[^.]+$/, ''), content: paragraphs || '<p></p>' });
+          continue;
+        }
+
+        if (file.size > LARGE_FILE_THRESHOLD) {
+          const decision = await showLargeFileDecisionModal(file);
+          if (decision === 'cancel') continue;
+          if (decision === 'link') {
+            const cardHtml = buildLinkOperationCardHtml({ filename: file.name, fileSizeText: formatBytes(file.size) });
+            if (embedIntoActive && state.activeNoteId) {
+              insertHtmlIntoActiveEditor(cardHtml);
+              embeddedCount++;
+            } else {
+              await addNewNote({ title: file.name.replace(/\.[^.]+$/, ''), content: cardHtml, tags: ['外部リンク運用'] });
+            }
+            showedCustomToast = true;
+            showToast('リンク運用カードを作成しました。カード右上の「✎ 編集」からURLを登録できます', 'info');
+            continue;
+          }
+        }
+
+        const dataUrl = await readFileAsDataURL(file);
+        if (file.type.startsWith('image/')) {
+          const html = `<p><img src="${dataUrl}" alt="${escapeHtml(file.name)}"></p>`;
+          if (embedIntoActive && state.activeNoteId) { insertHtmlIntoActiveEditor(html); embeddedCount++; }
+          else await addNewNote({ title: file.name.replace(/\.[^.]+$/, ''), content: html });
+        } else if (file.type === 'application/pdf' || lower.endsWith('.pdf')) {
+          const html = `<div style="margin:12px 0;"><div style="padding:10px 14px;border:1px solid #d6d3d1;border-radius:10px;background:#f5f5f4;margin-bottom:6px;font-size:13px;">📄 <strong>${escapeHtml(file.name)}</strong> (${formatBytes(file.size)}) <a href="${dataUrl}" download="${escapeHtml(file.name)}" style="margin-left:10px;color:#16a34a;">ダウンロード</a></div><embed src="${dataUrl}" type="application/pdf" width="100%" height="520px" style="border-radius:8px;border:1px solid #e7e5e4;"></div><p></p>`;
+          if (embedIntoActive && state.activeNoteId) { insertHtmlIntoActiveEditor(html); embeddedCount++; }
+          else await addNewNote({ title: file.name.replace(/\.pdf$/i, ''), content: html });
+        } else {
+          await addNewNote({ title: file.name, content: `<p>📎 添付ファイル: <a href="${dataUrl}" download="${escapeHtml(file.name)}">${escapeHtml(file.name)}</a> (${formatBytes(file.size)})</p>` });
+        }
+      }
+
+      if (createdCount > 0) {
+        await saveAllStateToDB();
+        if (lastCreatedId) state.activeNoteId = lastCreatedId;
+        renderAll();
+        toggleMobileEditor(true);
+        if (!showedCustomToast) {
+          showToast(createdCount === 1 ? 'ファイルから新しいノートを作成しました' : `${createdCount} 件のノートを取り込みました`, 'success');
+        }
+      } else if (embeddedCount > 0) {
+        renderAll();
+        if (!showedCustomToast) {
+          showToast(`${embeddedCount} 件のファイルをノートに埋め込みました`, 'success');
+        }
+      }
+    }
+
+    function saveEditorSelection() {
+      const sel = window.getSelection();
+      if (sel && sel.rangeCount > 0 && el.noteRichEditor.contains(sel.anchorNode)) {
+        state.savedEditorRange = sel.getRangeAt(0).cloneRange();
+      } else {
+        state.savedEditorRange = null;
+      }
+    }
+
+    function insertHtmlIntoActiveEditor(html) {
+      if (!state.activeNoteId) return;
+      el.noteRichEditor.focus();
+      if (state.savedEditorRange && el.noteRichEditor.contains(state.savedEditorRange.startContainer)) {
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(state.savedEditorRange);
+      }
+      state.savedEditorRange = null;
+      document.execCommand('insertHTML', false, html);
+      handleEditorContentChange();
+    }
+
+    /* ==========================================================================
+       8. ノートCRUD・ゴミ箱・自動保存
+       ========================================================================== */
+    function buildNewNoteObject({ title = '', content = '<p></p>', tags = [], stack = '', notebook = '' } = {}) {
+      const id = generateId();
+      const now = new Date().toISOString();
+      const loc = getDefaultTargetLocation();
+      const note = {
+        id, title, content, plainText: stripHtmlToText(content),
+        tags, pinned: state.activeFilter === 'pinned', trashed: false,
+        stack: stack || loc.stack, notebook: notebook || loc.notebook,
+        createdAt: now, updatedAt: now,
+        filename: ensureHtmlFilename(title || '新規ノート', id, ''), gdriveFileId: '', size: 0
+      };
+      note.size = estimateNoteBytes(note);
+      return note;
+    }
+
+    async function createNewNote() {
+      await flushPendingAutoSave();
+      if (state.activeFilter === 'trash') state.activeFilter = 'all';
+      const note = buildNewNoteObject();
+      state.notes.unshift(note);
+      state.activeNoteId = note.id;
+      await uploadNoteToGoogleDrive(note);
+      await saveSingleNoteToDB(note);
+      renderAll();
+      toggleMobileEditor(true);
+      el.noteTitleInput.focus();
+    }
+
+    async function executeSaveForNote(targetId) {
+      const note = state.notes.find(n => n.id === targetId);
+      if (!note) return;
+      note.size = new Blob([serializeNoteToHTML(note)]).size;
+      await uploadNoteToGoogleDrive(note);
+      await saveSingleNoteToDB(note);
+      updateTotalStorageStats();
+      if (state.activeNoteId === targetId) {
+        const label = state.gdriveToken ? 'クラウド保存済み' : 'HTML保存済み';
+        el.saveStatusIndicator.innerHTML = `<span style="width:8px;height:8px;border-radius:50%;background:var(--brand-500);"></span> ${label}`;
+        el.noteUpdatedDisplay.textContent = `更新: ${formatDate(note.updatedAt)}`;
+        el.noteSizeDisplay.textContent = formatBytes(note.size);
+      }
+    }
+
+    async function flushPendingAutoSave() {
+      if (state.saveTimeout && state.pendingSaveNoteId) {
+        clearTimeout(state.saveTimeout);
+        const idToSave = state.pendingSaveNoteId;
+        state.saveTimeout = null;
+        state.pendingSaveNoteId = null;
+        await executeSaveForNote(idToSave);
+      }
+    }
+
+    function scheduleAutoSave() {
+      const targetId = state.activeNoteId;
+      if (!targetId) return;
+      state.pendingSaveNoteId = targetId;
+      el.saveStatusIndicator.innerHTML = `<span class="animate-pulse" style="width:8px;height:8px;border-radius:50%;background:var(--amber-500);"></span> 保存中...`;
+      clearTimeout(state.saveTimeout);
+      state.saveTimeout = setTimeout(async () => {
+        state.saveTimeout = null;
+        state.pendingSaveNoteId = null;
+        await executeSaveForNote(targetId);
+      }, 650);
+    }
+
+    function handleEditorContentChange() {
+      const note = state.notes.find(n => n.id === state.activeNoteId);
+      if (!note) return;
+      note.content = el.noteRichEditor.innerHTML;
+      note.plainText = stripHtmlToText(note.content);
+      note.updatedAt = new Date().toISOString();
+      note.size = estimateNoteBytes(note);
+      renderNotesList();
+      scheduleAutoSave();
+    }
+
+    async function moveNoteToTrash(noteId, silent = false) {
+      await flushPendingAutoSave();
+      const note = state.notes.find(n => n.id === noteId);
+      if (!note || note.trashed) return;
+      note.trashed = true;
+      note.pinned = false;
+      note.updatedAt = new Date().toISOString();
+      await uploadNoteToGoogleDrive(note);
+      if (!silent) {
+        if (state.activeNoteId === noteId) state.activeNoteId = getFilteredAndSortedNotes().find(n => n.id !== noteId)?.id || null;
+        await saveSingleNoteToDB(note);
+        renderAll();
+        toggleMobileEditor(false);
+        showToast('ノートをゴミ箱へ移動しました（いつでも復元できます）', 'info');
+      }
+    }
+
+    async function restoreNoteFromTrash(noteId) {
+      const note = state.notes.find(n => n.id === noteId);
+      if (!note || !note.trashed) return;
+      note.trashed = false;
+      note.updatedAt = new Date().toISOString();
+      await uploadNoteToGoogleDrive(note);
+      await saveSingleNoteToDB(note);
+      renderAll();
+      showToast('ノートを元の場所へ復元しました', 'success');
+    }
+
+    async function permanentlyDeleteNote(noteId) {
+      const note = state.notes.find(n => n.id === noteId);
+      if (!note) return;
+      if (!await showConfirmModal({ title: 'ノートの完全削除', message: `「${note.title || '無題のノート'}」を完全に削除しますか？\nGoogleドライブ上のファイルも削除され、元に戻せません。`, confirmText: '完全に削除', isDanger: true })) return;
+
+      const driveId = note.gdriveFileId;
+      state.notes = state.notes.filter(n => n.id !== noteId);
+      state.selectedNoteIds.delete(noteId);
+      if (state.activeNoteId === noteId) state.activeNoteId = getFilteredAndSortedNotes()[0]?.id || null;
+
+      await deleteNoteFromGoogleDrive(driveId);
+      await deleteSingleNoteFromDB(noteId);
+      renderAll();
+      toggleMobileEditor(false);
+      showToast('ノートを完全に削除しました', 'info');
+    }
+
+    async function emptyTrash() {
+      const trashed = state.notes.filter(n => n.trashed);
+      if (!trashed.length) return;
+      if (!await showConfirmModal({ title: 'ゴミ箱を空にする', message: `ゴミ箱内の ${trashed.length} 件のノートをすべて完全に削除しますか？`, confirmText: 'すべて完全削除', isDanger: true })) return;
+
+      for (const n of trashed) {
+        await deleteNoteFromGoogleDrive(n.gdriveFileId);
+        state.selectedNoteIds.delete(n.id);
+      }
+      state.notes = state.notes.filter(n => !n.trashed);
+      if (!state.notes.some(n => n.id === state.activeNoteId)) state.activeNoteId = null;
+      await saveAllStateToDB();
+      renderAll();
+      showToast('ゴミ箱を空にしました', 'info');
+    }
+
+    async function downloadSingleNoteAsHTML() {
+      await flushPendingAutoSave();
+      const note = state.notes.find(n => n.id === state.activeNoteId);
+      if (!note) return;
+      const url = URL.createObjectURL(new Blob([serializeNoteToHTML(note)], { type: 'text/html;charset=utf-8' }));
+      const a = Object.assign(document.createElement('a'), { href: url, download: ensureHtmlFilename(note.title, note.id, note.filename) });
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+      showToast('単体HTMLファイルをダウンロードしました', 'success');
+    }
+
+    async function exportAllNotesAsZip() {
+      await flushPendingAutoSave();
+      const active = state.notes.filter(n => !n.trashed);
+      if (!active.length) return showToast('エクスポートするノートがありません', 'warning');
+
+      const filesMap = new Map(), used = new Set();
+      for (const note of active) {
+        const dirs = [note.stack && sanitizeFilename(note.stack), note.notebook && sanitizeFilename(note.notebook)].filter(Boolean);
+        const base = ensureHtmlFilename(note.title, note.id, note.filename);
+        let fullPath = [...dirs, base].join('/'), c = 2;
+        while (used.has(fullPath)) fullPath = [...dirs, base.replace(/\.html$/i, `_${c++}.html`)].join('/');
+        used.add(fullPath);
+        filesMap.set(fullPath, serializeNoteToHTML(note));
+      }
+
+      const url = URL.createObjectURL(await StandaloneZip.createZipBlob(filesMap));
+      const a = Object.assign(document.createElement('a'), { href: url, download: `LooseNote_Backup_${new Date().toISOString().slice(0, 10)}.zip` });
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+      showToast(`${active.length} 件のノートをHTML一括ZIPとして保存しました`, 'success');
+    }
+
+    async function clearAllEnvironment() {
+      if (!await showConfirmModal({ title: '端末内の表示画面を空にする', message: 'この端末のブラウザ内に表示されているノート一覧をクリアしますか？\n（※Googleドライブ上のファイルは削除されず、再同期でいつでも復元できます）', confirmText: '画面を空にする', isDanger: true })) return;
+      clearTimeout(state.saveTimeout);
+      state.saveTimeout = null;
+      state.pendingSaveNoteId = null;
+      state.notes = [];
+      state.notebooks = [];
+      state.selectedNoteIds.clear();
+      state.noteHistory = [];
+      state.activeNoteId = null;
+      state.activeFilter = 'all';
+      state.searchQuery = '';
+      el.searchInput.value = '';
+      el.clearSearchBtn.classList.add('hidden');
+      await saveAllStateToDB();
+      renderAll();
+      showToast('端末内の画面表示を空にしました', 'success');
+    }
+
+    /* ==========================================================================
+       9. 画像ツールバー・ライトボックス・リンクカード・ノート間リンク
+       ========================================================================== */
+    function positionImageFloatingToolbar(img) {
+      if (!img || !document.body.contains(img)) return hideImageFloatingToolbar();
+      state.activeEditorImg = img;
+      document.querySelectorAll('#note-rich-editor img').forEach(i => i.classList.remove('selected-editor-img'));
+      img.classList.add('selected-editor-img');
+
+      const rect = img.getBoundingClientRect();
+      el.imageFloatingToolbar.classList.remove('hidden');
+      el.imageFloatingToolbar.style.top = `${Math.max(60, rect.top - 42)}px`;
+      el.imageFloatingToolbar.style.left = `${Math.max(16, Math.min(window.innerWidth - 260, rect.left + 8))}px`;
+    }
+
+    function hideImageFloatingToolbar() {
+      state.activeEditorImg = null;
+      document.querySelectorAll('#note-rich-editor img').forEach(i => i.classList.remove('selected-editor-img'));
+      el.imageFloatingToolbar.classList.add('hidden');
+    }
+
+    async function editExistingLinkCard(cardEl) {
+      if (!cardEl) return;
+      const res = await showLinkCardModal({
+        modalTitle: 'Googleドライブリンク運用カードを編集',
+        confirmLabel: '変更を反映',
+        initialFilename: cardEl.getAttribute('data-filename') || '',
+        initialUrl: cardEl.getAttribute('data-url') || cardEl.querySelector('a')?.getAttribute('href') || '',
+        initialMemo: cardEl.getAttribute('data-memo') || ''
+      });
+      if (res) {
+        const tmp = document.createElement('div');
+        tmp.innerHTML = buildLinkOperationCardHtml({ filename: res.filename, fileSizeText: cardEl.getAttribute('data-filesize') || '', url: res.url, memo: res.memo });
+        const newCard = tmp.querySelector('.loosenote-link-card');
+        if (newCard) { cardEl.replaceWith(newCard); handleEditorContentChange(); showToast('リンク運用カードを更新しました', 'success'); }
+      }
+    }
+
+    async function jumpToLinkedNote(targetNoteId, pushHistory = true) {
+      if (!targetNoteId || targetNoteId === state.activeNoteId) return;
+      const targetNote = state.notes.find(n => n.id === targetNoteId);
+      if (!targetNote) {
+        return showToast('リンク先のノートは完全に削除されたか見つかりません', 'warning');
+      }
+
+      await flushPendingAutoSave();
+      hideImageFloatingToolbar();
+      closeNoteLinkPopup();
+
+      if (pushHistory && state.activeNoteId) {
+        state.noteHistory.push(state.activeNoteId);
+        if (state.noteHistory.length > 30) state.noteHistory.shift();
+      }
+
+      if (targetNote.trashed) {
+        state.activeFilter = 'trash';
+      } else if (state.activeFilter !== 'all') {
+        const visibleInCurrent = getFilteredAndSortedNotes().some(n => n.id === targetNoteId);
+        if (!visibleInCurrent) state.activeFilter = 'all';
+      }
+
+      state.activeNoteId = targetNoteId;
+      renderAll();
+      toggleMobileEditor(true);
+    }
+
+    async function navigateBackNote() {
+      while (state.noteHistory.length > 0) {
+        const prevId = state.noteHistory.pop();
+        if (state.notes.some(n => n.id === prevId)) {
+          await jumpToLinkedNote(prevId, false);
+          return;
+        }
+      }
+      renderEditor();
+    }
+
+    function syncInternalLinkTitlesInEditor() {
+      const links = el.noteRichEditor.querySelectorAll('a[data-note-link-id]');
+      links.forEach(a => {
+        const target = state.notes.find(n => n.id === a.getAttribute('data-note-link-id'));
+        if (target) {
+          const expected = `📄 ${target.title || '無題のノート'}`;
+          if (a.textContent !== expected) a.textContent = expected;
+        }
+      });
+    }
+
+    function closeNoteLinkPopup() {
+      state.wikiLinkState = null;
+      el.noteLinkPopup.classList.add('hidden');
+      el.noteLinkPopup.innerHTML = '';
+    }
+
+    function updateWikiLinkPopup() {
+      const sel = window.getSelection();
+      if (!sel || !sel.rangeCount || !sel.isCollapsed) return closeNoteLinkPopup();
+      const range = sel.getRangeAt(0);
+      const node = range.startContainer;
+      if (node.nodeType !== Node.TEXT_NODE || !el.noteRichEditor.contains(node)) return closeNoteLinkPopup();
+
+      const textBefore = node.textContent.slice(0, range.startOffset);
+      const match = textBefore.match(/(?:\[\[|［［)([^\]］\r\n]{0,40})$/);
+      if (!match) return closeNoteLinkPopup();
+
+      const kw = match[1].trim().toLowerCase();
+      const candidates = state.notes
+        .filter(n => !n.trashed && n.id !== state.activeNoteId)
+        .filter(n => !kw || `${n.title || ''} ${n.notebook || ''}`.toLowerCase().includes(kw))
+        .sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt))
+        .slice(0, 8);
+
+      if (!candidates.length) return closeNoteLinkPopup();
+
+      state.wikiLinkState = {
+        node,
+        startOffset: range.startOffset - match[0].length,
+        endOffset: range.startOffset,
+        candidates,
+        selectedIndex: 0
+      };
+
+      const rect = range.getBoundingClientRect();
+      el.noteLinkPopup.innerHTML = candidates.map((n, idx) => `
+        <button type="button" data-wiki-idx="${idx}" class="wiki-link-item ${idx === 0 ? 'active' : ''}">
+          <span class="truncate" style="font-weight:600;">📄 ${escapeHtml(n.title || '無題のノート')}</span>
+          ${n.notebook ? `<span class="badge badge-muted truncate" style="max-width:90px;flex-shrink:0;">${escapeHtml(n.notebook)}</span>` : ''}
+        </button>`).join('');
+
+      el.noteLinkPopup.classList.remove('hidden');
+      el.noteLinkPopup.style.top = `${Math.min(window.innerHeight - 240, (rect.bottom || 180) + 6)}px`;
+      el.noteLinkPopup.style.left = `${Math.max(16, Math.min(window.innerWidth - 306, rect.left || 40))}px`;
+    }
+
+    function applyWikiLinkSelection(index) {
+      const ws = state.wikiLinkState;
+      if (!ws || !ws.candidates[index]) return closeNoteLinkPopup();
+      const targetNote = ws.candidates[index];
+
+      try {
+        if (!document.body.contains(ws.node)) return closeNoteLinkPopup();
+        const range = document.createRange();
+        range.setStart(ws.node, ws.startOffset);
+        range.setEnd(ws.node, Math.min(ws.endOffset, ws.node.textContent.length));
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+
+        closeNoteLinkPopup();
+        document.execCommand('insertHTML', false, buildNoteLinkHtml(targetNote));
+        handleEditorContentChange();
+      } catch {
+        closeNoteLinkPopup();
+      }
+    }
+
+    /* ==========================================================================
+       10. フィルタ・検索・UI描画
+       ========================================================================== */
+    function updateTotalStorageStats() {
+      const total = state.notes.reduce((sum, n) => sum + (n.size || 0), 0);
+      el.totalDataSizeBadge.textContent = formatBytes(total);
+      el.totalDataSizeBadge.className = total > TOTAL_STORAGE_WARN_THRESHOLD ? 'badge badge-amber' : 'badge badge-muted';
+    }
+
+    function getFilteredAndSortedNotes() {
+      const f = state.activeFilter;
+      let list = state.notes.filter(n => {
+        if (f === 'trash') return n.trashed;
+        if (n.trashed) return false;
+        if (f === 'pinned') return n.pinned;
+        if (f === 'unclassified') return !n.notebook;
+        if (f.startsWith('stack:')) return n.stack === f.slice(6);
+        if (f.startsWith('notebook:')) return n.notebook === f.slice(9);
+        return true;
+      });
+
+      const keywords = state.searchQuery.trim().toLowerCase().split(/\s+/).filter(Boolean);
+      if (keywords.length) {
+        list = list.filter(n => {
+          const hay = `${n.title || ''} ${n.plainText || ''} ${(n.tags || []).join(' ')} ${n.stack || ''} ${n.notebook || ''}`.toLowerCase();
+          return keywords.every(kw => hay.includes(kw));
+        });
+      }
+
+      return list.sort((a, b) => {
+        if (state.sortBy === 'created-desc') return new Date(b.createdAt) - new Date(a.createdAt);
+        if (state.sortBy === 'created-asc') return new Date(a.createdAt) - new Date(b.createdAt);
+        if (state.sortBy === 'title-asc') return (a.title || '').localeCompare(b.title || '', 'ja');
+        if (state.sortBy === 'size-desc') return (b.size || 0) - (a.size || 0);
+        return new Date(b.updatedAt) - new Date(a.updatedAt);
+      });
+    }
+
+    function highlightSearchMatch(text, query) {
+      const safe = escapeHtml(text);
+      const keywords = query.trim().split(/\s+/).filter(Boolean).map(k => k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+      return keywords.length ? safe.replace(new RegExp(`(${keywords.join('|')})`, 'gi'), '<mark style="background:#fde68a;color:#1c1917;border-radius:3px;padding:0 2px;">$1</mark>') : safe;
+    }
+
+    function renderSidebarNotebooksTree() {
+      const allNotebooks = Array.from(getAllNotebooksMap().values());
+      const stacksMap = new Map(), standalone = [];
+      allNotebooks.forEach(nb => {
+        if (nb.stack) {
+          if (!stacksMap.has(nb.stack)) stacksMap.set(nb.stack, []);
+          stacksMap.get(nb.stack).push(nb);
+        } else standalone.push(nb);
+      });
+
+      const renderNbRow = (nb, indented = false) => `
+        <div data-notebook-drop="${escapeHtml(nb.name)}" class="notebook-drop-zone tree-row ${indented ? 'indented' : ''} ${state.activeFilter === `notebook:${nb.name}` ? 'active' : ''}">
+          <button type="button" data-filter="notebook:${escapeHtml(nb.name)}" style="display:flex;align-items:center;gap:6px;min-width:0;flex:1;text-align:left;">
+            <svg width="13" height="13" style="flex-shrink:0;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"></path></svg>
+            <span class="truncate">${escapeHtml(nb.name)}</span>
+          </button>
+          <div style="display:flex;align-items:center;gap:4px;flex-shrink:0;">
+            <button type="button" data-edit-notebook="${escapeHtml(nb.name)}" title="ノートブック編集・削除" class="hover-action">
+              <svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
+            </button>
+            <span style="font-size:11px;color:var(--text-faint);">${nb.count}</span>
+          </div>
+        </div>`;
+
+      let html = '';
+      for (const stackName of Array.from(stacksMap.keys()).sort((a, b) => a.localeCompare(b, 'ja'))) {
+        const children = stacksMap.get(stackName).sort((a, b) => a.name.localeCompare(b.name, 'ja'));
+        const collapsed = state.collapsedStacks.has(stackName);
+        html += `<div>
+          <div class="tree-row ${state.activeFilter === `stack:${stackName}` ? 'active' : ''}" style="padding-left:4px;">
+            <div style="display:flex;align-items:center;gap:4px;min-width:0;flex:1;">
+              <button type="button" data-toggle-stack="${escapeHtml(stackName)}" style="padding:2px;color:var(--text-faint);display:inline-flex;align-items:center;">
+                <svg width="12" height="12" style="${collapsed ? '' : 'transform:rotate(90deg);'}" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 5l7 7-7 7"></path></svg>
+              </button>
+              <button type="button" data-filter="stack:${escapeHtml(stackName)}" style="display:flex;align-items:center;gap:6px;min-width:0;flex:1;text-align:left;font-weight:500;">
+                <svg width="13" height="13" style="color:var(--amber-500);flex-shrink:0;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
+                <span class="truncate">${escapeHtml(stackName)}</span>
+              </button>
+            </div>
+            <div style="display:flex;align-items:center;gap:4px;flex-shrink:0;">
+              <button type="button" data-edit-stack="${escapeHtml(stackName)}" title="スタック名の変更・解除" class="hover-action">
+                <svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
+              </button>
+              <span style="font-size:11px;color:var(--text-faint);">${children.reduce((s, c) => s + c.count, 0)}</span>
+            </div>
+          </div>
+          ${collapsed ? '' : children.map(nb => renderNbRow(nb, true)).join('')}
+        </div>`;
+      }
+
+      standalone.sort((a, b) => a.name.localeCompare(b.name, 'ja')).forEach(nb => html += renderNbRow(nb));
+
+      const unclassifiedCount = state.notes.filter(n => !n.trashed && !n.notebook).length;
+      const trashCount = state.notes.filter(n => n.trashed).length;
+      html += `
+        <div style="margin-top:6px;padding-top:6px;border-top:1px solid var(--border);display:flex;flex-direction:column;gap:2px;">
+          <div data-notebook-drop="__unclassified__" class="notebook-drop-zone tree-row ${state.activeFilter === 'unclassified' ? 'active' : ''}">
+            <button type="button" data-filter="unclassified" style="display:flex;align-items:center;gap:6px;min-width:0;flex:1;text-align:left;">
+              <span>📥</span><span class="truncate">未分類 (インボックス)</span>
+            </button>
+            <span style="font-size:11px;color:var(--text-faint);">${unclassifiedCount}</span>
+          </div>
+          <div class="tree-row ${state.activeFilter === 'trash' ? 'active' : ''}">
+            <button type="button" data-filter="trash" style="display:flex;align-items:center;gap:6px;min-width:0;flex:1;text-align:left;">
+              <span>🗑️</span><span class="truncate">ゴミ箱</span>
+            </button>
+            <span style="font-size:11px;color:var(--text-faint);">${trashCount}</span>
+          </div>
+        </div>`;
+
+      el.sidebarNotebooksTree.innerHTML = html;
+    }
+
+    function renderSidebarCounts() {
+      updateTotalStorageStats();
+      updateGdriveStatusUI();
+      const active = state.notes.filter(n => !n.trashed);
+      el.countAll.textContent = active.length;
+      el.countPinned.textContent = active.filter(n => n.pinned).length;
+      renderSidebarNotebooksTree();
+
+      document.querySelectorAll('.filter-btn').forEach(btn => btn.classList.toggle('active', btn.dataset.filter === state.activeFilter));
+
+      const f = state.activeFilter;
+      el.currentViewLabel.textContent =
+        f === 'all' ? 'すべてのノート' :
+        f === 'pinned' ? 'ピン留め' :
+        f === 'unclassified' ? '📥 未分類 (インボックス)' :
+        f === 'trash' ? '🗑️ ゴミ箱' :
+        f.startsWith('stack:') ? `📚 ${f.slice(6)}` :
+        f.startsWith('notebook:') ? `📓 ${f.slice(9)}` : 'すべてのノート';
+
+      el.trashViewBanner.classList.toggle('hidden', f !== 'trash');
+    }
+
+    function renderNotesList() {
+      const filtered = getFilteredAndSortedNotes();
+      el.filteredCountBadge.textContent = filtered.length;
+
+      const visibleIds = new Set(filtered.map(n => n.id));
+      for (const id of Array.from(state.selectedNoteIds)) if (!visibleIds.has(id)) state.selectedNoteIds.delete(id);
+
+      const selCount = state.selectedNoteIds.size;
+      el.bulkActionBar.classList.toggle('hidden', selCount === 0);
+      if (selCount > 0) {
+        el.bulkSelectedCount.textContent = `${selCount}件選択`;
+        el.bulkSelectAllCheckbox.checked = selCount === filtered.length;
+        el.bulkMoveBtn.classList.toggle('hidden', state.activeFilter === 'trash');
+        el.bulkTagBtn.classList.toggle('hidden', state.activeFilter === 'trash');
+        el.bulkTrashBtn.textContent = state.activeFilter === 'trash' ? '🔥 完全削除' : '🗑️ 削除';
+      }
+
+      el.iconViewCompact.classList.toggle('hidden', state.isCompactList);
+      el.iconViewCard.classList.toggle('hidden', !state.isCompactList);
+
+      if (!filtered.length) {
+        el.notesListContainer.innerHTML = `<div style="padding:36px 20px;text-align:center;font-size:12px;color:var(--text-faint);"><p>${state.activeFilter === 'trash' ? 'ゴミ箱は空です' : '一致するノートがありません'}</p></div>`;
+        return;
+      }
+
+      el.notesListContainer.innerHTML = filtered.map(note => {
+        const activeCls = note.id === state.activeNoteId ? 'active' : '';
+        const checkedCls = state.selectedNoteIds.has(note.id) ? 'checked' : '';
+        const isChecked = state.selectedNoteIds.has(note.id) ? 'checked' : '';
+        const hasMedia = /<(img|embed|iframe)\b/i.test(note.content || '');
+        const thumbSrc = (note.content || '').match(/<img\b[^>]*?\bsrc=["']([^"']+)["']/i)?.[1] || '';
+        const isLarge = (note.size || 0) > LARGE_FILE_THRESHOLD;
+        const isCreatedSort = state.sortBy.startsWith('created-');
+        const displayDateText = isCreatedSort ? `作成: ${formatDate(note.createdAt)}` : formatDate(note.updatedAt);
+
+        if (state.isCompactList) {
+          return `<article draggable="${!note.trashed}" data-note-id="${escapeHtml(note.id)}" class="note-card compact ${activeCls} ${checkedCls}">
+            <div style="display:flex;align-items:center;gap:8px;min-width:0;flex:1;">
+              <input type="checkbox" data-check-id="${escapeHtml(note.id)}" ${isChecked} style="cursor:pointer;">
+              <span class="truncate" style="font-size:12px;font-weight:600;">${note.pinned ? '📌 ' : ''}${highlightSearchMatch(note.title || '無題のノート', state.searchQuery)}</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
+              ${note.notebook ? `<span class="badge badge-muted truncate" style="max-width:85px;">${escapeHtml(note.notebook)}</span>` : ''}
+              ${isLarge ? '<span style="font-size:10px;">⚠️</span>' : ''}
+              ${hasMedia ? '<span style="font-size:11px;">📎</span>' : ''}
+              <span style="font-size:10px;color:var(--text-faint);">${formatDate(isCreatedSort ? note.createdAt : note.updatedAt).slice(5)}</span>
+            </div>
+          </article>`;
+        }
+
+        return `<article draggable="${!note.trashed}" data-note-id="${escapeHtml(note.id)}" class="note-card ${activeCls} ${checkedCls}">
+          <div style="display:flex;align-items:flex-start;gap:10px;">
+            <input type="checkbox" data-check-id="${escapeHtml(note.id)}" ${isChecked} style="margin-top:3px;cursor:pointer;">
+            <div style="min-width:0;flex:1;">
+              <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:6px;margin-bottom:4px;">
+                <h4 class="line-clamp-1" style="margin:0;font-size:14px;font-weight:700;">${note.pinned ? '📌 ' : ''}${highlightSearchMatch(note.title || '無題のノート', state.searchQuery)}</h4>
+                <div style="display:flex;align-items:center;gap:4px;flex-shrink:0;">
+                  ${isLarge ? `<span class="badge badge-amber">⚠️ ${formatBytes(note.size)}</span>` : ''}
+                  ${hasMedia ? '<span style="font-size:12px;">📎</span>' : ''}
+                </div>
+              </div>
+              <p class="line-clamp-2" style="margin:0 0 8px;font-size:12px;color:var(--text-muted);line-height:1.5;">${highlightSearchMatch((note.plainText || '').slice(0, 95) || '（本文なし）', state.searchQuery)}</p>
+              <div style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:6px;">
+                <div style="display:flex;flex-wrap:wrap;align-items:center;gap:4px;min-width:0;">
+                  ${note.notebook ? `<span class="badge badge-muted truncate" style="max-width:120px;">📓 ${escapeHtml(note.notebook)}</span>` : ''}
+                  ${(note.tags || []).slice(0, 2).map(t => `<span class="badge badge-brand">#${escapeHtml(t)}</span>`).join('')}
+                </div>
+                <span style="font-size:10px;color:var(--text-faint);">${displayDateText}</span>
+              </div>
+            </div>
+            ${thumbSrc ? `<img src="${thumbSrc}" alt="" class="note-thumb" loading="lazy">` : ''}
+          </div>
+        </article>`;
+      }).join('');
+    }
+
+    function renderEditor() {
+      const note = state.notes.find(n => n.id === state.activeNoteId);
+      el.emptyEditorState.classList.toggle('hidden', Boolean(note));
+      el.activeEditorContainer.classList.toggle('hidden', !note);
+      if (!note) {
+        el.noteRichEditor.dataset.loadedNoteId = '';
+        return;
+      }
+
+      el.trashedNoteNoticeBar.classList.toggle('hidden', !note.trashed);
+      el.navBackNoteBtn.classList.toggle('hidden', state.noteHistory.length === 0);
+
+      const sortedNbs = Array.from(getAllNotebooksMap().values()).sort((a, b) =>
+        (a.stack ? `${a.stack}/${a.name}` : a.name).localeCompare(b.stack ? `${b.stack}/${b.name}` : b.name, 'ja')
+      );
+      el.noteNotebookSelect.innerHTML = `<option value="">未分類 (インボックス)</option>` +
+        sortedNbs.map(nb => `<option value="${escapeHtml(nb.name)}" ${note.notebook === nb.name ? 'selected' : ''}>${escapeHtml(nb.stack ? `${nb.stack} / ${nb.name}` : nb.name)}</option>`).join('');
+
+      el.noteCreatedDisplay.textContent = `作成: ${formatDate(note.createdAt)}`;
+      el.noteUpdatedDisplay.textContent = `更新: ${formatDate(note.updatedAt)}`;
+      el.noteSizeDisplay.textContent = formatBytes(note.size);
+      if (document.activeElement !== el.noteTitleInput) el.noteTitleInput.value = note.title || '';
+
+      el.pinNoteBtn.classList.toggle('badge-amber', Boolean(note.pinned));
+      el.activeNoteTags.innerHTML = (note.tags || []).map(tag =>
+        `<span class="badge badge-brand" style="font-size:12px;padding:2px 8px;">#${escapeHtml(tag)} <button type="button" data-remove-tag="${escapeHtml(tag)}" style="margin-left:3px;">&times;</button></span>`
+      ).join('');
+
+      if (el.noteRichEditor.dataset.loadedNoteId !== note.id) {
+        el.noteRichEditor.innerHTML = note.content || '';
+        el.noteRichEditor.dataset.loadedNoteId = note.id;
+      }
+      syncInternalLinkTitlesInEditor();
+    }
+
+    function renderAll() {
+      renderSidebarCounts();
+      renderNotesList();
+      renderEditor();
+    }
+
+    /* ==========================================================================
+       11. モバイル制御＆イベントリスナー
+       ========================================================================== */
+    const toggleMobileSidebar = (open) => {
+      el.leftSidebar.classList.toggle('open', open);
+      el.sidebarBackdrop.classList.toggle('hidden', !open);
+    };
+
+    const toggleMobileEditor = (open) => {
+      if (window.innerWidth < 768) {
+        if (!open) hideImageFloatingToolbar();
+        el.noteListPane.classList.toggle('hidden', open);
+        el.editorPane.classList.toggle('mobile-open', open);
+      }
+    };
+
+    function setupEventListeners() {
+      el.themeToggleBtn.onclick = () => {
+        const isDark = document.documentElement.classList.toggle('dark');
+        localStorage.setItem('loosenote-theme', isDark ? 'dark' : 'light');
+        el.themeIconSun.classList.toggle('hidden', !isDark);
+        el.themeIconMoon.classList.toggle('hidden', isDark);
+      };
+
+      el.openSidebarBtn.onclick = () => toggleMobileSidebar(true);
+      el.closeSidebarBtn.onclick = () => toggleMobileSidebar(false);
+      el.sidebarBackdrop.onclick = () => toggleMobileSidebar(false);
+      el.mobileBackBtn.onclick = async () => { await flushPendingAutoSave(); toggleMobileEditor(false); };
+      el.navBackNoteBtn.onclick = navigateBackNote;
+
+      el.newNoteBtn.onclick = createNewNote;
+      el.emptyCreateBtn.onclick = createNewNote;
+
+      // Google Drive 連携ボタン群
+      el.connectGdriveBtn.onclick = connectGoogleDriveFlow;
+      el.syncGdriveNowBtn.onclick = () => syncWithGoogleDrive(true);
+      el.gdriveSettingsBtn.onclick = async () => {
+        const res = await showGdriveSettingsModal();
+        if (!res) return;
+        if (res.action === 'logout') {
+          if (state.gdriveToken && window.google?.accounts?.oauth2) {
+            try { window.google.accounts.oauth2.revoke(state.gdriveToken, () => {}); } catch {}
+          }
+          state.gdriveToken = null;
+          state.gdriveTokenExpiry = 0;
+          state.gdriveRootFolderId = null;
+          state.gdriveFolderCache.clear();
+          updateGdriveStatusUI();
+          showToast('Googleドライブからログアウトしました', 'info');
+        } else if (res.action === 'save') {
+          state.gdriveClientId = res.clientId;
+          state.gdriveFolderName = res.folderName;
+          state.gdriveRootFolderId = null;
+          state.gdriveFolderCache.clear();
+          localStorage.setItem(LS_CLIENT_ID_KEY, state.gdriveClientId);
+          localStorage.setItem(LS_FOLDER_NAME_KEY, state.gdriveFolderName);
+          updateGdriveStatusUI();
+          await connectGoogleDriveFlow();
+        }
+      };
+
+      el.importEnexBtn.onclick = () => el.enexFileInput.click();
+      el.enexFileInput.onchange = async (e) => { await handleDroppedOrSelectedFiles(e.target.files, false); e.target.value = ''; };
+      el.exportZipBtn.onclick = exportAllNotesAsZip;
+      el.clearAllBtn.onclick = clearAllEnvironment;
+
+      document.querySelectorAll('.filter-btn').forEach(btn => btn.onclick = () => {
+        state.activeFilter = btn.dataset.filter;
+        state.selectedNoteIds.clear();
+        renderAll();
+        toggleMobileSidebar(false);
+      });
+
+      // サイドバーツリーのイベントデリゲーション
+      el.sidebarNotebooksTree.onclick = async (e) => {
+        const toggleStack = e.target.closest('[data-toggle-stack]')?.dataset.toggleStack;
+        if (toggleStack) {
+          state.collapsedStacks.has(toggleStack) ? state.collapsedStacks.delete(toggleStack) : state.collapsedStacks.add(toggleStack);
+          return renderSidebarNotebooksTree();
+        }
+        const filterBtn = e.target.closest('[data-filter]');
+        if (filterBtn) {
+          state.activeFilter = filterBtn.dataset.filter;
+          state.selectedNoteIds.clear();
+          renderAll();
+          return toggleMobileSidebar(false);
+        }
+        const editStack = e.target.closest('[data-edit-stack]')?.dataset.editStack;
+        if (editStack) {
+          const res = await showStackModal(editStack);
+          if (res?.action === 'ungroup') await renameOrUngroupStack(editStack, '');
+          else if (res?.action === 'rename' && res.newStack !== editStack) await renameOrUngroupStack(editStack, res.newStack);
+          return;
+        }
+        const editNb = e.target.closest('[data-edit-notebook]')?.dataset.editNotebook;
+        if (editNb) {
+          const res = await showNotebookModal({ title: 'ノートブック・スタック設定', initialNotebook: editNb, initialStack: getAllNotebooksMap().get(editNb)?.stack || '', isEdit: true });
+          if (res?.action === 'delete') {
+            const cnt = state.notes.filter(n => n.notebook === editNb).length;
+            if (await showConfirmModal({ title: 'ノートブックを削除', message: cnt ? `「${editNb}」を削除しますか？\n中のノート（${cnt}件）は「📥 未分類」へ移動します。` : `空のノートブック「${editNb}」を削除しますか？`, confirmText: '削除する', isDanger: true })) {
+              await deleteNotebook(editNb);
+            }
+          } else if (res?.action === 'save') {
+            await createOrUpdateNotebook(editNb, res.notebook, res.stack);
+            showToast('ノートブック設定を更新しました', 'success');
+          }
+        }
+      };
+
+      el.sidebarNotebooksTree.ondragover = (e) => {
+        const zone = e.target.closest('.notebook-drop-zone');
+        if (zone) { e.preventDefault(); zone.classList.add('ring-2'); }
+      };
+      el.sidebarNotebooksTree.ondragleave = (e) => {
+        const zone = e.target.closest('.notebook-drop-zone');
+        if (zone && !zone.contains(e.relatedTarget)) zone.classList.remove('ring-2');
+      };
+      el.sidebarNotebooksTree.ondrop = async (e) => {
+        const zone = e.target.closest('.notebook-drop-zone');
+        if (!zone) return;
+        e.preventDefault();
+        e.stopPropagation();
+        zone.classList.remove('ring-2');
+        const noteId = e.dataTransfer.getData('text/loosenote-id');
+        const target = zone.dataset.notebookDrop;
+        if (noteId && target) await moveNoteToNotebook(noteId, target === '__unclassified__' ? '' : target);
+      };
+
+      el.createNotebookBtn.onclick = async () => {
+        const res = await showNotebookModal({ title: '新しいノートブック・スタックを作成' });
+        if (res?.action === 'save') {
+          await createOrUpdateNotebook(null, res.notebook, res.stack);
+          state.activeFilter = `notebook:${res.notebook}`;
+          renderAll();
+          showToast(`ノートブック「${res.notebook}」を作成しました`, 'success');
+        }
+      };
+
+      el.quickNewNotebookInlineBtn.onclick = async () => {
+        const res = await showNotebookModal({ title: '新しいノートブックを作成して移動' });
+        if (res?.action === 'save') {
+          await createOrUpdateNotebook(null, res.notebook, res.stack);
+          if (state.activeNoteId) await moveNoteToNotebook(state.activeNoteId, res.notebook);
+        }
+      };
+
+      el.noteNotebookSelect.onchange = (e) => state.activeNoteId && moveNoteToNotebook(state.activeNoteId, e.target.value);
+
+      el.editCreatedBtn.onclick = async () => {
+        const note = state.notes.find(n => n.id === state.activeNoteId);
+        if (!note) return;
+        await flushPendingAutoSave();
+        const newIso = await showEditCreatedDateModal(note.createdAt);
+        if (!newIso) return;
+        note.createdAt = newIso;
+        note.updatedAt = new Date().toISOString();
+        await executeSaveForNote(note.id);
+        renderNotesList();
+        renderEditor();
+        showToast(`作成日時を「${formatDate(newIso)}」に変更しました`, 'success');
+      };
+
+      el.searchInput.oninput = (e) => {
+        state.searchQuery = e.target.value;
+        el.clearSearchBtn.classList.toggle('hidden', !state.searchQuery);
+        renderNotesList();
+      };
+      el.clearSearchBtn.onclick = () => {
+        state.searchQuery = '';
+        el.searchInput.value = '';
+        el.clearSearchBtn.classList.add('hidden');
+        renderNotesList();
+      };
+      el.sortSelect.onchange = (e) => { state.sortBy = e.target.value; renderNotesList(); };
+      el.toggleCompactListBtn.onclick = () => {
+        state.isCompactList = !state.isCompactList;
+        localStorage.setItem('loosenote-compact', String(state.isCompactList));
+        renderNotesList();
+      };
+
+      el.notesListContainer.onclick = async (e) => {
+        const cb = e.target.closest('[data-check-id]');
+        if (cb) {
+          e.stopPropagation();
+          cb.checked ? state.selectedNoteIds.add(cb.dataset.checkId) : state.selectedNoteIds.delete(cb.dataset.checkId);
+          return renderNotesList();
+        }
+        const card = e.target.closest('[data-note-id]');
+        if (card) {
+          hideImageFloatingToolbar();
+          if (state.activeNoteId !== card.dataset.noteId) {
+            await flushPendingAutoSave();
+          }
+          state.activeNoteId = card.dataset.noteId;
+          renderNotesList();
+          renderEditor();
+          toggleMobileEditor(true);
+        }
+      };
+      el.notesListContainer.ondragstart = (e) => {
+        const card = e.target.closest('[data-note-id]');
+        if (card) {
+          e.dataTransfer.setData('text/loosenote-id', card.dataset.noteId);
+          e.dataTransfer.effectAllowed = 'move';
+        }
+      };
+
+      el.emptyTrashBtn.onclick = emptyTrash;
+      el.restoreTrashedNoteBtn.onclick = () => state.activeNoteId && restoreNoteFromTrash(state.activeNoteId);
+      el.permanentDeleteNoteBtn.onclick = () => state.activeNoteId && permanentlyDeleteNote(state.activeNoteId);
+
+      el.bulkSelectAllCheckbox.onchange = () => {
+        const filtered = getFilteredAndSortedNotes();
+        state.selectedNoteIds.clear();
+        if (el.bulkSelectAllCheckbox.checked) filtered.forEach(n => state.selectedNoteIds.add(n.id));
+        renderNotesList();
+      };
+
+      el.bulkMoveBtn.onclick = async () => {
+        const ids = Array.from(state.selectedNoteIds);
+        const targetNb = ids.length ? await showBulkActionModal('move', ids.length) : null;
+        if (targetNb === null) return;
+        for (const id of ids) await moveNoteToNotebook(id, targetNb, true);
+        state.selectedNoteIds.clear();
+        await saveAllStateToDB();
+        renderAll();
+        showToast(`${ids.length} 件のノートを${targetNb ? `「${targetNb}」` : '未分類'}へ移動しました`, 'success');
+      };
+
+      el.bulkTagBtn.onclick = async () => {
+        const ids = Array.from(state.selectedNoteIds);
+        const tag = ids.length ? await showBulkActionModal('tag', ids.length) : null;
+        if (!tag) return;
+        for (const id of ids) {
+          const note = state.notes.find(n => n.id === id);
+          if (note && !(note.tags || []).includes(tag)) {
+            note.tags = [...(note.tags || []), tag];
+            note.updatedAt = new Date().toISOString();
+            await uploadNoteToGoogleDrive(note);
+          }
+        }
+        state.selectedNoteIds.clear();
+        await saveAllStateToDB();
+        renderAll();
+        showToast(`${ids.length} 件のノートにタグ「#${tag}」を追加しました`, 'success');
+      };
+
+      el.bulkTrashBtn.onclick = async () => {
+        const ids = Array.from(state.selectedNoteIds);
+        if (!ids.length) return;
+        if (state.activeFilter === 'trash') {
+          if (!await showConfirmModal({ title: '選択ノートの完全削除', message: `選択中の ${ids.length} 件を完全に削除しますか？`, confirmText: '完全に削除', isDanger: true })) return;
+          for (const id of ids) {
+            const n = state.notes.find(x => x.id === id);
+            if (n) await deleteNoteFromGoogleDrive(n.gdriveFileId);
+          }
+          state.notes = state.notes.filter(n => !state.selectedNoteIds.has(n.id));
+          if (state.selectedNoteIds.has(state.activeNoteId)) state.activeNoteId = null;
+          state.selectedNoteIds.clear();
+          await saveAllStateToDB();
+          renderAll();
+          showToast(`${ids.length} 件を完全に削除しました`, 'info');
+        } else {
+          for (const id of ids) await moveNoteToTrash(id, true);
+          if (state.selectedNoteIds.has(state.activeNoteId)) state.activeNoteId = null;
+          state.selectedNoteIds.clear();
+          await saveAllStateToDB();
+          renderAll();
+          showToast(`${ids.length} 件をゴミ箱へ移動しました`, 'info');
+        }
+      };
+
+      el.noteTitleInput.oninput = (e) => {
+        const note = state.notes.find(n => n.id === state.activeNoteId);
+        if (!note) return;
+        note.title = e.target.value;
+        note.updatedAt = new Date().toISOString();
+        renderNotesList();
+        scheduleAutoSave();
+      };
+
+      el.activeNoteTags.onclick = (e) => {
+        const target = e.target.closest('[data-remove-tag]')?.dataset.removeTag;
+        const note = state.notes.find(n => n.id === state.activeNoteId);
+        if (!target || !note) return;
+        note.tags = (note.tags || []).filter(t => t !== target);
+        note.updatedAt = new Date().toISOString();
+        renderNotesList();
+        renderEditor();
+        scheduleAutoSave();
+      };
+
+      el.addTagInput.onkeydown = (e) => {
+        if (e.key !== 'Enter') return;
+        e.preventDefault();
+        const val = el.addTagInput.value.trim().replace(/^#+/, '');
+        const note = state.notes.find(n => n.id === state.activeNoteId);
+        if (val && note && !(note.tags || []).includes(val)) {
+          note.tags = [...(note.tags || []), val];
+          note.updatedAt = new Date().toISOString();
+          renderNotesList();
+          renderEditor();
+          scheduleAutoSave();
+        }
+        el.addTagInput.value = '';
+      };
+
+      el.pinNoteBtn.onclick = () => {
+        const note = state.notes.find(n => n.id === state.activeNoteId);
+        if (!note || note.trashed) return;
+        note.pinned = !note.pinned;
+        note.updatedAt = new Date().toISOString();
+        renderAll();
+        scheduleAutoSave();
+      };
+
+      el.downloadSingleHtmlBtn.onclick = downloadSingleNoteAsHTML;
+      el.deleteNoteBtn.onclick = () => {
+        const note = state.notes.find(n => n.id === state.activeNoteId);
+        if (note) note.trashed ? permanentlyDeleteNote(note.id) : moveNoteToTrash(note.id);
+      };
+
+      document.querySelectorAll('.toolbar-btn').forEach(btn => btn.onclick = () => {
+        el.noteRichEditor.focus();
+        document.execCommand(btn.dataset.cmd, false, btn.dataset.val || null);
+        handleEditorContentChange();
+      });
+      el.insertCheckboxBtn.onclick = () => insertHtmlIntoActiveEditor('<div><input type="checkbox" style="margin-right:6px;"> </div>');
+      el.embedMediaBtn.onclick = () => { saveEditorSelection(); el.embedMediaInput.click(); };
+      el.embedMediaInput.onchange = async (e) => { await handleDroppedOrSelectedFiles(e.target.files, true); e.target.value = ''; };
+      el.insertLinkCardBtn.onclick = async () => {
+        saveEditorSelection();
+        const res = await showLinkCardModal();
+        if (res) {
+          insertHtmlIntoActiveEditor(buildLinkOperationCardHtml(res));
+          showToast('Googleドライブリンク運用カードを挿入しました', 'success');
+        }
+      };
+      el.insertNoteLinkBtn.onclick = async () => {
+        saveEditorSelection();
+        const targetNote = await showNoteLinkPickerModal();
+        if (targetNote) {
+          insertHtmlIntoActiveEditor(buildNoteLinkHtml(targetNote));
+          showToast(`「${targetNote.title || '無題のノート'}」へのリンクを挿入しました`, 'success');
+        }
+      };
+
+      el.noteRichEditor.oninput = () => {
+        handleEditorContentChange();
+        updateWikiLinkPopup();
+      };
+      el.noteRichEditor.onkeydown = (e) => {
+        const ws = state.wikiLinkState;
+        if (!ws) return;
+        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+          e.preventDefault();
+          const len = ws.candidates.length;
+          ws.selectedIndex = (ws.selectedIndex + (e.key === 'ArrowDown' ? 1 : -1) + len) % len;
+          el.noteLinkPopup.querySelectorAll('.wiki-link-item').forEach((btn, idx) => {
+            btn.classList.toggle('active', idx === ws.selectedIndex);
+          });
+        } else if (e.key === 'Enter') {
+          e.preventDefault();
+          applyWikiLinkSelection(ws.selectedIndex);
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          closeNoteLinkPopup();
+        }
+      };
+      el.noteLinkPopup.onclick = (e) => {
+        const btn = e.target.closest('[data-wiki-idx]');
+        if (btn) {
+          e.preventDefault();
+          e.stopPropagation();
+          applyWikiLinkSelection(Number(btn.dataset.wikiIdx));
+        }
+      };
+      el.noteRichEditor.onchange = (e) => {
+        if (e.target && e.target.type === 'checkbox') {
+          if (e.target.checked) e.target.setAttribute('checked', 'checked');
+          else e.target.removeAttribute('checked');
+          handleEditorContentChange();
+        }
+      };
+      el.noteRichEditor.onpaste = async (e) => {
+        const imgs = Array.from(e.clipboardData?.items || []).filter(i => i.kind === 'file' && i.type.startsWith('image/')).map(i => i.getAsFile()).filter(Boolean);
+        if (imgs.length) { e.preventDefault(); await handleDroppedOrSelectedFiles(imgs, true); }
+      };
+
+      el.noteRichEditor.onclick = async (e) => {
+        const editBtn = e.target.closest('.loosenote-edit-link-card-btn');
+        if (editBtn) { e.preventDefault(); e.stopPropagation(); return editExistingLinkCard(editBtn.closest('.loosenote-link-card')); }
+
+        const img = e.target.closest('img');
+        if (img && el.noteRichEditor.contains(img)) return positionImageFloatingToolbar(img);
+        hideImageFloatingToolbar();
+
+        const anchor = e.target.closest('a');
+        const href = (anchor?.getAttribute('href') || '').trim();
+        if (!anchor || !href) return;
+
+        const internalId = anchor.getAttribute('data-note-link-id') || (href.startsWith('#note-id:') ? href.slice(9) : '');
+        if (internalId) {
+          e.preventDefault();
+          e.stopPropagation();
+          return jumpToLinkedNote(internalId, true);
+        }
+
+        if (anchor.hasAttribute('download') || href.startsWith('data:')) {
+          e.preventDefault();
+          e.stopPropagation();
+          try {
+            const filename = anchor.getAttribute('download') || anchor.textContent.trim() || 'attachment';
+            if (href.startsWith('data:')) {
+              const idx = href.indexOf(',');
+              const header = idx !== -1 ? href.slice(0, idx) : '';
+              const body = idx !== -1 ? href.slice(idx + 1) : href;
+              const mime = header.match(/data:([^;]+)/i)?.[1] || 'application/octet-stream';
+              const blob = /;base64/i.test(header) ? new Blob([base64ToUint8Array(body).bytes], { type: mime }) : new Blob([decodeURIComponent(body)], { type: mime });
+              const url = URL.createObjectURL(blob);
+              const tmp = Object.assign(document.createElement('a'), { href: url, download: filename });
+              document.body.appendChild(tmp);
+              tmp.click();
+              tmp.remove();
+              setTimeout(() => URL.revokeObjectURL(url), 10000);
+              showToast(`「${filename}」をダウンロードしました`, 'success');
+            } else {
+              window.open(href, '_blank', 'noopener,noreferrer');
+            }
+          } catch { showToast('ファイルのダウンロードに失敗しました', 'error'); }
+        } else if (/^https?:\/\//i.test(href)) {
+          e.preventDefault();
+          window.open(href, '_blank', 'noopener,noreferrer');
+        }
+      };
+
+      document.querySelectorAll('[data-img-size]').forEach(btn => btn.onclick = (e) => {
+        e.stopPropagation();
+        if (!state.activeEditorImg) return;
+        state.activeEditorImg.style.width = btn.dataset.imgSize;
+        state.activeEditorImg.style.maxWidth = '100%';
+        positionImageFloatingToolbar(state.activeEditorImg);
+        handleEditorContentChange();
+      });
+      el.imgLightboxOpenBtn.onclick = (e) => {
+        e.stopPropagation();
+        if (state.activeEditorImg?.src) {
+          el.imgLightboxPreview.src = state.activeEditorImg.src;
+          el.imageLightboxModal.classList.remove('hidden');
+        }
+      };
+      const closeLightbox = () => { el.imageLightboxModal.classList.add('hidden'); el.imgLightboxPreview.src = ''; };
+      el.imgLightboxCloseBtn.onclick = closeLightbox;
+      el.imageLightboxModal.onclick = (e) => { if (e.target === el.imageLightboxModal) closeLightbox(); };
+      document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeLightbox(); hideImageFloatingToolbar(); closeNoteLinkPopup(); } });
+      document.addEventListener('click', (e) => {
+        if (!e.target.closest('#note-rich-editor img, #image-floating-toolbar')) hideImageFloatingToolbar();
+        if (!e.target.closest('#note-link-popup')) closeNoteLinkPopup();
+      });
+      window.addEventListener('beforeunload', () => {
+        if (state.saveTimeout && state.pendingSaveNoteId) {
+          const note = state.notes.find(n => n.id === state.pendingSaveNoteId);
+          if (note) saveSingleNoteToDB(note);
+        }
+      });
+
+      let dragCounter = 0;
+      window.addEventListener('dragenter', (e) => { if (e.dataTransfer?.types?.includes('Files') && ++dragCounter === 1) el.globalDropOverlay.classList.remove('hidden'); });
+      window.addEventListener('dragleave', (e) => { if (e.dataTransfer?.types?.includes('Files') && (dragCounter = Math.max(0, dragCounter - 1)) === 0) el.globalDropOverlay.classList.add('hidden'); });
+      window.addEventListener('dragover', (e) => { if (e.dataTransfer?.types?.includes('Files')) e.preventDefault(); });
+      window.addEventListener('drop', async (e) => {
+        if (e.dataTransfer?.files?.length) {
+          e.preventDefault();
+          dragCounter = 0;
+          el.globalDropOverlay.classList.add('hidden');
+          await handleDroppedOrSelectedFiles(e.dataTransfer.files, false);
+        }
+      });
+    }
+
+    /* ==========================================================================
+       12. 初期化
+       ========================================================================== */
+    async function initApp() {
+      const savedTheme = localStorage.getItem('loosenote-theme');
+      const isDark = savedTheme === 'dark' || (!savedTheme && window.matchMedia('(prefers-color-scheme: dark)').matches);
+      document.documentElement.classList.toggle('dark', isDark);
+      el.themeIconSun.classList.toggle('hidden', !isDark);
+      el.themeIconMoon.classList.toggle('hidden', isDark);
+
+      setupEventListeners();
+
+      const loaded = await loadStateFromDB();
+      if (loaded.initialized) {
+        state.notes = loaded.notes;
+        state.notebooks = loaded.notebooks;
+        syncNotebooksFromNotes();
+      } else {
+        const welcome = buildNewNoteObject({
+          title: 'LooseNote Cloud（Google Drive API 直接連携版）へようこそ！',
+          stack: 'はじめに',
+          notebook: 'クイックガイド',
+          tags: ['ガイド'],
+          content: `<p><strong>LooseNote Cloud</strong> は、PC・スマホのどちらからでも Google ドライブ上の専用フォルダへ直接読み書き・同期できるノートアプリです。</p>
+            <h2>初回セットアップ手順</h2>
+            <ol>
+              <li>左メニューの <strong>「⚙️（設定ボタン）」</strong> を開き、Google Cloud Console で取得した <strong>OAuth クライアントID</strong> を入力します。</li>
+              <li><strong>「Googleドライブに接続」</strong> を押して Google アカウントでログインすると、マイドライブ内に <code>LooseNote_Data</code> フォルダが自動作成され、PC・スマホ間でノートが直接同期されます。</li>
+              <li>同じ Google アカウントで別の端末（スマホや別PC）からも接続すれば、同じノート一覧を双方向で編集・同期できます。</li>
+            </ol>`
+        });
+        welcome.pinned = true;
+        state.notes = [welcome];
+        syncNotebooksFromNotes();
+        await saveAllStateToDB();
+      }
+
+      state.activeNoteId = state.notes.find(n => !n.trashed)?.id || null;
+      renderAll();
+
+      // クライアントID設定済みならバックグラウンドでサイレント認証・自動同期を試行
+      if (state.gdriveClientId) {
+        const token = await ensureValidGdriveToken(false);
+        if (token) await syncWithGoogleDrive(false);
+      }
+    }
+
+    initApp();
+  </script>
+</body>
+</html>
