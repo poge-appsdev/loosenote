@@ -448,17 +448,57 @@
     html.dark #note-rich-editor a { color: #4ade80; }
     #note-rich-editor a[download] {
       display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px; border-radius: 8px;
-      background: rgba(22, 163, 74, 0.12); text-decoration: none; font-weight: 500;
+      background: rgba(22, 163, 74, 0.12); text-decoration: none; font-weight: 500; cursor: pointer;
     }
     #note-rich-editor a[download]:hover { background: rgba(22, 163, 74, 0.22); }
     #note-rich-editor table { border-collapse: collapse; width: 100%; margin: 0.85rem 0; font-size: 0.9rem; }
     #note-rich-editor th, #note-rich-editor td { border: 1px solid var(--border-strong); padding: 0.45rem 0.65rem; vertical-align: top; }
     #note-rich-editor th { background: var(--bg-muted); font-weight: 600; text-align: left; }
+    #note-rich-editor pre, #note-rich-editor code { color: var(--text-main); }
+    #note-rich-editor input[type="checkbox"] { accent-color: #22c55e; }
     .loosenote-edit-link-card-btn {
       float: right; font-size: 11px; font-weight: 600; padding: 3px 8px; border-radius: 6px;
       background: #e0f2fe; color: #0369a1; border: 1px solid #bae6fd; cursor: pointer;
     }
     .loosenote-edit-link-card-btn:hover { background: #bae6fd; }
+
+    /* ダークモード時の自動視認性補正（既存ノート・インポートHTMLの黒文字・白背景を自動救済） */
+    html.dark #note-rich-editor [data-dark-auto-text="1"] {
+      color: #f1f5f9 !important;
+    }
+    html.dark #note-rich-editor [data-dark-auto-bg="1"] {
+      background-color: rgba(30, 41, 59, 0.78) !important;
+    }
+    html.dark #note-rich-editor [data-dark-auto-bg="highlight"],
+    html.dark #note-rich-editor mark {
+      color: #0f172a !important;
+    }
+    html.dark #note-rich-editor [data-dark-auto-bg="highlight"] *,
+    html.dark #note-rich-editor mark * {
+      color: #0f172a !important;
+    }
+    html.dark #note-rich-editor div[style*="background:#f5f5f4"],
+    html.dark #note-rich-editor div[style*="background: #f5f5f4"] {
+      background: #1e293b !important;
+      border-color: #334155 !important;
+      color: #f8fafc !important;
+    }
+    html.dark #note-rich-editor .loosenote-link-card {
+      background: rgba(12, 74, 110, 0.35) !important;
+      border-color: #0369a1 !important;
+      color: #f1f5f9 !important;
+    }
+    html.dark #note-rich-editor .loosenote-link-card > div:nth-child(2) {
+      color: #7dd3fc !important;
+    }
+    html.dark #note-rich-editor .loosenote-link-card > div:last-child {
+      background: rgba(15, 23, 42, 0.85) !important;
+      border-color: #1e3a5f !important;
+      color: #cbd5e1 !important;
+    }
+    html.dark #note-rich-editor .loosenote-link-card a {
+      color: #38bdf8 !important;
+    }
 
     /* ノート間リンクチップ & [[ クイック候補ポップアップ */
     #note-rich-editor a.loosenote-internal-link {
@@ -1062,12 +1102,137 @@
       return /<(img|embed|iframe)\b/i.test(html || '');
     }
 
+    /* ==========================================================================
+       ダークモード自動視認性補正エンジン（元のHTML色情報を壊さず画面表示のみ最適化）
+       ========================================================================== */
+    const _colorParserCtx = (() => {
+      try {
+        const c = document.createElement('canvas');
+        c.width = 1;
+        c.height = 1;
+        return c.getContext('2d');
+      } catch {
+        return null;
+      }
+    })();
+
+    function parseCssColorToRgba(colorStr) {
+      const raw = (colorStr || '').trim();
+      if (!raw || raw === 'transparent' || raw === 'inherit' || raw === 'initial' || raw === 'currentcolor') return null;
+      if (/^(windowtext|canvastext)$/i.test(raw)) {
+        return { r: 0, g: 0, b: 0, a: 1 };
+      }
+
+      if (_colorParserCtx) {
+        _colorParserCtx.fillStyle = '#010203';
+        _colorParserCtx.fillStyle = raw;
+        const normalized = _colorParserCtx.fillStyle;
+        if (normalized === '#010203' && !/^(#010203|rgb\(\s*1\s*,\s*2\s*,\s*3\s*\))$/i.test(raw)) {
+          return null;
+        }
+        if (normalized.startsWith('#') && normalized.length === 7) {
+          return {
+            r: parseInt(normalized.slice(1, 3), 16),
+            g: parseInt(normalized.slice(3, 5), 16),
+            b: parseInt(normalized.slice(5, 7), 16),
+            a: 1
+          };
+        }
+        const rgbaMatch = normalized.match(/^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)(?:\s*,\s*([\d.]+))?\s*\)$/i);
+        if (rgbaMatch) {
+          return {
+            r: Number(rgbaMatch[1]),
+            g: Number(rgbaMatch[2]),
+            b: Number(rgbaMatch[3]),
+            a: rgbaMatch[4] !== undefined ? Number(rgbaMatch[4]) : 1
+          };
+        }
+      }
+      return null;
+    }
+
+    function getRelativeLuminance({ r, g, b }) {
+      const toLinear = (v) => {
+        const s = v / 255;
+        return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+      };
+      return 0.2126 * toLinear(r) + 0.7152 * toLinear(g) + 0.0722 * toLinear(b);
+    }
+
+    function applyDarkModeReadabilityFix(containerEl) {
+      if (!containerEl) return;
+      containerEl.querySelectorAll('[data-dark-auto-text], [data-dark-auto-bg]').forEach(elNode => {
+        elNode.removeAttribute('data-dark-auto-text');
+        elNode.removeAttribute('data-dark-auto-bg');
+      });
+      if (!document.documentElement.classList.contains('dark')) return;
+
+      const styledNodes = containerEl.querySelectorAll('[style], font[color], [bgcolor]');
+      for (const node of styledNodes) {
+        if (node.closest('.loosenote-link-card')) continue;
+
+        const rawBg = node.style?.backgroundColor || node.getAttribute('bgcolor') || '';
+        if (rawBg) {
+          const bgRgba = parseCssColorToRgba(rawBg);
+          if (bgRgba && bgRgba.a > 0.25) {
+            const bgLum = getRelativeLuminance(bgRgba);
+            const bgSpread = Math.max(bgRgba.r, bgRgba.g, bgRgba.b) - Math.min(bgRgba.r, bgRgba.g, bgRgba.b);
+            if (bgLum > 0.62) {
+              node.setAttribute('data-dark-auto-bg', bgSpread >= 55 ? 'highlight' : '1');
+            }
+          }
+        }
+
+        if (node.closest('[data-dark-auto-bg="highlight"]')) continue;
+
+        const rawColor = node.style?.color || (node.tagName === 'FONT' ? node.getAttribute('color') : '');
+        if (rawColor) {
+          const fgRgba = parseCssColorToRgba(rawColor);
+          if (fgRgba && fgRgba.a > 0.2) {
+            const fgLum = getRelativeLuminance(fgRgba);
+            const fgSpread = Math.max(fgRgba.r, fgRgba.g, fgRgba.b) - Math.min(fgRgba.r, fgRgba.g, fgRgba.b);
+            const isNeutralDark = fgSpread < 65 && fgLum < 0.45;
+            const isDeepColoredDark = fgLum < 0.11;
+            if (isNeutralDark || isDeepColoredDark) {
+              node.setAttribute('data-dark-auto-text', '1');
+            }
+          }
+        }
+      }
+    }
+
+    function stripTransientDarkAttrs(rawHtml) {
+      if (!rawHtml) return rawHtml;
+      let cleaned = rawHtml;
+      if (cleaned.includes('data-dark-auto-')) {
+        cleaned = cleaned.replace(/\s+data-dark-auto-(?:text|bg)=["'][^"']*["']/gi, '');
+      }
+      if (cleaned.includes('selected-editor-img')) {
+        cleaned = cleaned.replace(/\bselected-editor-img\b/g, '').replace(/\s+class=["']\s*["']/gi, '');
+      }
+      return cleaned;
+    }
+
     function sanitizeExternalHttpUrl(rawUrl) {
       const trimmed = (rawUrl || '').trim();
       if (!trimmed) return '';
       if (/^(javascript|vbscript|data):/i.test(trimmed)) return '';
       if (/^https?:\/\//i.test(trimmed)) return trimmed;
       return `https://${trimmed.replace(/^\/+/, '')}`;
+    }
+
+    async function dataUrlToBlob(dataUrl) {
+      try {
+        const res = await fetch(dataUrl);
+        return await res.blob();
+      } catch {
+        const [header, base64Data] = dataUrl.split(',');
+        const mime = header.match(/:(.*?);/)?.[1] || 'application/octet-stream';
+        const bin = atob((base64Data || '').replace(/\s+/g, ''));
+        const bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        return new Blob([bytes], { type: mime });
+      }
     }
 
     function generateThumbnailFromDataUrl(dataUrl) {
@@ -3254,9 +3419,9 @@ ${contentHtml || '<p></p>'}
           const fname = res.filename || `attachment_${hash.slice(0, 6)}`;
           if (res.mime.startsWith('image/')) return `<img src="${dataUrl}" alt="${escapeHtml(fname)}">`;
           if (res.mime === 'application/pdf') {
-            return `<div style="margin:12px 0;"><div style="padding:10px 14px;border:1px solid #d6d3d1;border-radius:10px;background:#f5f5f4;margin-bottom:6px;font-size:13px;">📄 <strong>${escapeHtml(fname)}</strong> <a href="${dataUrl}" download="${escapeHtml(fname)}" style="margin-left:10px;color:#16a34a;">ダウンロード</a></div><embed src="${dataUrl}" type="application/pdf" width="100%" height="480px" style="border-radius:8px;border:1px solid #e7e5e4;"></div>`;
+            return `<div style="margin:12px 0;"><div style="padding:10px 14px;border:1px solid #d6d3d1;border-radius:10px;background:#f5f5f4;color:#1c1917;margin-bottom:6px;font-size:13px;">📄 <strong>${escapeHtml(fname)}</strong> <a href="${dataUrl}" download="${escapeHtml(fname)}" contenteditable="false" style="margin-left:10px;color:#16a34a;">ダウンロード</a></div><embed src="${dataUrl}" type="application/pdf" width="100%" height="480px" style="border-radius:8px;border:1px solid #e7e5e4;"></div>`;
           }
-          return `<p>📎 <a href="${dataUrl}" download="${escapeHtml(fname)}">${escapeHtml(fname)} (${escapeHtml(res.mime)})</a></p>`;
+          return `<p>📎 <a href="${dataUrl}" download="${escapeHtml(fname)}" contenteditable="false">${escapeHtml(fname)} (${escapeHtml(res.mime)})</a></p>`;
         };
 
         enNote.querySelectorAll('en-media').forEach(media => {
@@ -3642,11 +3807,11 @@ ${contentHtml || '<p></p>'}
           if (embedIntoActive && state.activeNoteId) { insertHtmlIntoActiveEditor(html); embeddedCount++; }
           else await addNewSeparatedNote({ title: file.name.replace(/\.[^.]+$/, ''), content: html });
         } else if (file.type === 'application/pdf' || lower.endsWith('.pdf')) {
-          const html = `<div style="margin:12px 0;"><div style="padding:10px 14px;border:1px solid #d6d3d1;border-radius:10px;background:#f5f5f4;margin-bottom:6px;font-size:13px;">📄 <strong>${escapeHtml(file.name)}</strong> (${formatBytes(file.size)}) <a href="${dataUrl}" download="${escapeHtml(file.name)}" style="margin-left:10px;color:#16a34a;">ダウンロード</a></div><embed src="${dataUrl}" type="application/pdf" width="100%" height="520px" style="border-radius:8px;border:1px solid #e7e5e4;"></div><p></p>`;
+          const html = `<div style="margin:12px 0;"><div style="padding:10px 14px;border:1px solid #d6d3d1;border-radius:10px;background:#f5f5f4;color:#1c1917;margin-bottom:6px;font-size:13px;">📄 <strong>${escapeHtml(file.name)}</strong> (${formatBytes(file.size)}) <a href="${dataUrl}" download="${escapeHtml(file.name)}" contenteditable="false" style="margin-left:10px;color:#16a34a;">ダウンロード</a></div><embed src="${dataUrl}" type="application/pdf" width="100%" height="520px" style="border-radius:8px;border:1px solid #e7e5e4;"></div><p></p>`;
           if (embedIntoActive && state.activeNoteId) { insertHtmlIntoActiveEditor(html); embeddedCount++; }
           else await addNewSeparatedNote({ title: file.name.replace(/\.pdf$/i, ''), content: html });
         } else {
-          await addNewSeparatedNote({ title: file.name, content: `<p>📎 添付ファイル: <a href="${dataUrl}" download="${escapeHtml(file.name)}">${escapeHtml(file.name)}</a> (${formatBytes(file.size)})</p>` });
+          await addNewSeparatedNote({ title: file.name, content: `<p>📎 添付ファイル: <a href="${dataUrl}" download="${escapeHtml(file.name)}" contenteditable="false">${escapeHtml(file.name)}</a> (${formatBytes(file.size)})</p>` });
         }
       }
 
@@ -3690,6 +3855,7 @@ ${contentHtml || '<p></p>'}
       }
       state.savedEditorRange = null;
       document.execCommand('insertHTML', false, html);
+      applyDarkModeReadabilityFix(el.noteRichEditor);
       handleEditorContentChange(true);
     }
 
@@ -3832,7 +3998,10 @@ ${contentHtml || '<p></p>'}
     function handleEditorContentChange(immediateExtract = false) {
       const note = state.notes.find(n => n.id === state.activeNoteId);
       if (!note) return;
-      const html = el.noteRichEditor.innerHTML;
+      if (document.documentElement.classList.contains('dark')) {
+        applyDarkModeReadabilityFix(el.noteRichEditor);
+      }
+      const html = stripTransientDarkAttrs(el.noteRichEditor.innerHTML);
       state.activeNoteContentId = note.id;
       state.activeNoteContent = html;
       note.updatedAt = new Date().toISOString();
@@ -4089,224 +4258,397 @@ ${contentHtml || '<p></p>'}
         (a.stack ? `${a.stack}/${a.name}` : a.name).localeCompare(b.stack ? `${b.stack}/${b.name}` : b.name, 'ja')
       );
       el.noteNotebookSelect.innerHTML = `<option value="">📥 未分類 (インボックス)</option>` +
-        sortedAll.map(nb => `<option value="${escapeHtml(nb.name)}">${escapeHtml(nb.stack ? `📁 ${nb.stack} / ${nb.name}` : `📓 ${nb.name}`)}</option>`).join('');
+        sortedAll.map(nb => `<option value="${escapeHtml(nb.name)}">${escapeHtml(nb.stack ? `${nb.stack} / ${nb.name}` : nb.name)}</option>`).join('');
     }
 
-    function buildSingleNoteCardHtml(note) {
-      const isSelected = note.id === state.activeNoteId;
-      const isChecked = state.selectedNoteIds.has(note.id);
-      const snippet = escapeHtml(note.snippet || (note.plainText || '').slice(0, 90) || '（本文なし）');
-      const locBadge = note.notebook
-        ? `<span class="badge badge-brand truncate" style="max-width:130px;">${escapeHtml(note.stack ? `${note.stack} / ${note.notebook}` : note.notebook)}</span>`
-        : '';
-      const cloudBadge = note.needsSync ? `<span class="badge badge-amber" title="未同期（次回接続時に送信）">未同期</span>` : '';
-      const cacheBadge = (!note.contentCached && note.gdriveFileId)
-        ? `<span class="badge badge-muted" title="本文はGoogleドライブ上に保管（クリックで読込）">☁️</span>`
-        : '';
+    function buildNoteCardHtml(note, active, checked) {
+      const title = escapeHtml(note.title || '無題のノート');
+      const syncMark = note.needsSync ? '<span title="クラウド未送信（同期待ち）" style="color:var(--amber-500);font-size:11px;">●</span>' : '';
+      const dateStr = formatDate(state.sortBy.startsWith('created') ? note.createdAt : note.updatedAt).split(' ')[0];
 
       if (state.isCompactList) {
-        return `<div data-note-id="${note.id}" class="note-card compact ${isSelected ? 'active' : ''} ${isChecked ? 'checked' : ''}">
+        return `<article data-note-id="${note.id}" class="note-card compact ${active ? 'active' : ''} ${checked ? 'checked' : ''}">
           <div style="display:flex;align-items:center;gap:8px;min-width:0;flex:1;">
-            <input type="checkbox" data-check-note="${note.id}" ${isChecked ? 'checked' : ''} style="flex-shrink:0;cursor:pointer;">
+            <input type="checkbox" data-check-id="${note.id}" ${checked ? 'checked' : ''}>
             ${note.pinned ? '<span style="color:var(--amber-500);font-size:11px;">📌</span>' : ''}
-            <span class="truncate" style="font-size:13px;font-weight:600;">${escapeHtml(note.title || '無題のノート')}</span>
+            ${syncMark}
+            <h4 class="truncate" style="margin:0;font-size:13px;font-weight:700;">${title}</h4>
           </div>
           <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;font-size:11px;color:var(--text-faint);">
-            ${cloudBadge}${cacheBadge}
             ${note.notebook ? `<span class="badge badge-muted truncate" style="max-width:85px;">${escapeHtml(note.notebook)}</span>` : ''}
-            <span>${formatDate(note.updatedAt).slice(5)}</span>
+            <span>${dateStr}</span>
           </div>
-        </div>`;
+        </article>`;
       }
 
+      const snippet = escapeHtml(note.snippet || '（本文なし）');
+      const nbLabel = note.notebook ? (note.stack ? `${note.stack} / ${note.notebook}` : note.notebook) : '';
       const thumbHtml = note.thumbDataUrl
-        ? `<img src="${escapeHtml(note.thumbDataUrl)}" alt="" loading="lazy" class="note-thumb">`
-        : (note.hasMedia ? `<div class="note-thumb" style="display:flex;align-items:center;justify-content:center;font-size:18px;color:var(--text-faint);">📎</div>` : '');
+        ? `<img src="${note.thumbDataUrl}" alt="" class="note-thumb" loading="lazy">`
+        : (note.hasMedia ? `<div class="note-thumb" style="display:flex;align-items:center;justify-content:center;font-size:18px;">📎</div>` : '');
 
-      const tagsHtml = (note.tags || []).slice(0, 3).map(t => `<span class="badge badge-muted">#${escapeHtml(t)}</span>`).join('');
-      const extraTag = note.tags?.length > 3 ? `<span style="font-size:10px;color:var(--text-faint);">+${note.tags.length - 3}</span>` : '';
-
-      return `<div data-note-id="${note.id}" class="note-card ${isSelected ? 'active' : ''} ${isChecked ? 'checked' : ''}">
+      return `<article data-note-id="${note.id}" class="note-card ${active ? 'active' : ''} ${checked ? 'checked' : ''}">
         <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:4px;">
-          <div style="display:flex;align-items:flex-start;gap:8px;min-width:0;flex:1;">
-            <input type="checkbox" data-check-note="${note.id}" ${isChecked ? 'checked' : ''} style="margin-top:3px;flex-shrink:0;cursor:pointer;">
-            <h3 class="line-clamp-1" style="margin:0;font-size:14px;font-weight:700;">${escapeHtml(note.title || '無題のノート')}</h3>
+          <div style="display:flex;align-items:center;gap:7px;min-width:0;">
+            <input type="checkbox" data-check-id="${note.id}" ${checked ? 'checked' : ''} style="margin-top:2px;">
+            <h4 class="line-clamp-1" style="margin:0;font-size:13.5px;font-weight:700;">${title}</h4>
           </div>
           <div style="display:flex;align-items:center;gap:4px;flex-shrink:0;">
-            ${cloudBadge}${cacheBadge}
+            ${syncMark}
             ${note.pinned ? '<span style="color:var(--amber-500);font-size:12px;">📌</span>' : ''}
           </div>
         </div>
-        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;padding-left:20px;margin-bottom:6px;">
-          <p class="line-clamp-2" style="margin:0;font-size:12px;color:var(--text-muted);line-height:1.45;flex:1;">${snippet}</p>
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;padding-left:20px;margin-bottom:8px;">
+          <p class="line-clamp-2" style="margin:0;font-size:12px;color:var(--text-muted);line-height:1.5;flex:1;min-width:0;">${snippet}</p>
           ${thumbHtml}
         </div>
-        <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;padding-left:20px;font-size:11px;color:var(--text-faint);">
-          <div style="display:flex;flex-wrap:wrap;align-items:center;gap:4px;overflow:hidden;">${locBadge}${tagsHtml}${extraTag}</div>
-          <span style="flex-shrink:0;">${formatDate(note.updatedAt)}</span>
+        <div style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:4px;padding-left:20px;font-size:11px;color:var(--text-faint);">
+          <div style="display:flex;align-items:center;gap:4px;overflow:hidden;max-width:65%;">
+            ${nbLabel ? `<span class="badge badge-brand truncate" style="max-width:130px;">📁 ${escapeHtml(nbLabel)}</span>` : ''}
+            ${note.tags.slice(0, 2).map(t => `<span class="badge badge-muted truncate" style="max-width:75px;">#${escapeHtml(t)}</span>`).join('')}
+            ${note.tags.length > 2 ? `<span>+${note.tags.length - 2}</span>` : ''}
+          </div>
+          <span>${dateStr}</span>
         </div>
-      </div>`;
+      </article>`;
     }
 
     function updateSingleNoteCardInList(note) {
-      if (!note || !el.notesListContainer) return;
-      const existingCard = el.notesListContainer.querySelector(`[data-note-id="${CSS.escape(note.id)}"]`);
-      if (!existingCard) return;
-      const wrap = document.createElement('div');
-      wrap.innerHTML = buildSingleNoteCardHtml(note);
-      if (wrap.firstElementChild) existingCard.replaceWith(wrap.firstElementChild);
+      if (!note) return;
+      const cardEl = el.notesListContainer.querySelector(`article[data-note-id="${note.id}"]`);
+      if (!cardEl) return;
+      const wrapper = document.createElement('div');
+      wrapper.innerHTML = buildNoteCardHtml(note, note.id === state.activeNoteId, state.selectedNoteIds.has(note.id));
+      if (wrapper.firstElementChild) {
+        cardEl.replaceWith(wrapper.firstElementChild);
+      }
     }
 
-    function renderNotesList(resetPagination = true) {
-      if (resetPagination) {
-        state.renderedListCount = LIST_PAGE_SIZE;
-      }
+    function renderNotesList() {
+      const f = state.activeFilter;
+      el.currentViewLabel.textContent =
+        f === 'all' ? 'すべてのノート' :
+        f === 'pinned' ? 'ピン留め' :
+        f === 'unclassified' ? '未分類 (インボックス)' :
+        f === 'trash' ? '🗑️ ゴミ箱' :
+        f.startsWith('stack:') ? `📁 ${f.slice(6)}` :
+        f.startsWith('notebook:') ? `📓 ${f.slice(9)}` : 'ノート一覧';
 
-      const filtered = getFilteredAndSortedNotes();
-      el.filteredCountBadge.textContent = filtered.length;
-      el.trashViewBanner.classList.toggle('hidden', state.activeFilter !== 'trash');
+      el.trashViewBanner.classList.toggle('hidden', f !== 'trash');
+      el.iconViewCompact.classList.toggle('hidden', state.isCompactList);
+      el.iconViewCard.classList.toggle('hidden', !state.isCompactList);
 
-      const labels = {
-        all: 'すべてのノート',
-        pinned: '📌 ピン留め',
-        unclassified: '📥 未分類 (インボックス)',
-        trash: '🗑️ ゴミ箱'
-      };
-      el.currentViewLabel.textContent = labels[state.activeFilter]
-        || (state.activeFilter.startsWith('stack:') ? `📁 ${state.activeFilter.slice(6)}` : `📓 ${state.activeFilter.slice(9)}`);
+      const notes = getFilteredAndSortedNotes();
+      el.filteredCountBadge.textContent = notes.length;
 
-      const visibleIds = new Set(filtered.map(n => n.id));
-      state.selectedNoteIds.forEach(id => { if (!visibleIds.has(id)) state.selectedNoteIds.delete(id); });
+      const visibleSet = new Set(notes.map(n => n.id));
+      for (const id of state.selectedNoteIds) if (!visibleSet.has(id)) state.selectedNoteIds.delete(id);
 
       const selCount = state.selectedNoteIds.size;
       el.bulkActionBar.classList.toggle('hidden', selCount === 0);
       if (selCount > 0) {
         el.bulkSelectedCount.textContent = `${selCount}件選択`;
-        el.bulkSelectAllCheckbox.checked = filtered.length > 0 && filtered.every(n => state.selectedNoteIds.has(n.id));
-        el.bulkTrashBtn.textContent = state.activeFilter === 'trash' ? '🔥 完全削除' : '🗑️ 削除';
+        el.bulkSelectAllCheckbox.checked = notes.length > 0 && selCount === notes.length;
+        el.bulkTrashBtn.textContent = f === 'trash' ? '🔥 完全削除' : '🗑️ ゴミ箱';
       }
 
-      if (!filtered.length) {
-        el.notesListContainer.innerHTML = `<div style="padding:48px 24px;text-align:center;color:var(--text-faint);font-size:13px;">一致するノートがありません</div>`;
+      if (!notes.length) {
+        el.notesListContainer.innerHTML = `<div style="padding:36px 16px;text-align:center;font-size:12px;color:var(--text-faint);">
+          ${state.searchQuery ? '検索条件に一致するノートが見つかりませんでした' : 'このビューにはまだノートがありません'}
+        </div>`;
         return;
       }
 
-      const sliceEnd = Math.min(filtered.length, state.renderedListCount);
-      const visibleSlice = filtered.slice(0, sliceEnd);
-      const remaining = filtered.length - sliceEnd;
+      const visibleSlice = notes.slice(0, state.renderedListCount);
+      const remainingCount = notes.length - visibleSlice.length;
 
-      const footerHtml = remaining > 0
-        ? `<div id="notes-list-sentinel" style="padding:14px;text-align:center;border-bottom:1px solid var(--border);background:var(--bg-muted);">
-            <button type="button" id="load-more-notes-btn" class="btn btn-surface" style="font-size:12px;">
-              さらに読み込む（残り ${remaining.toLocaleString()} 件 / 全 ${filtered.length.toLocaleString()} 件）
-            </button>
-          </div>`
-        : `<div style="padding:12px;text-align:center;font-size:11px;color:var(--text-faint);">全 ${filtered.length.toLocaleString()} 件を表示済み</div>`;
-
-      el.notesListContainer.innerHTML = visibleSlice.map(buildSingleNoteCardHtml).join('') + footerHtml;
+      let html = visibleSlice.map(note => buildNoteCardHtml(note, note.id === state.activeNoteId, state.selectedNoteIds.has(note.id))).join('');
+      if (remainingCount > 0) {
+        html += `<div style="padding:14px;text-align:center;">
+          <button type="button" id="load-more-notes-btn" class="btn btn-surface" style="width:100%;padding:8px 12px;font-weight:600;">
+            さらに表示する（残り ${remainingCount} 件）
+          </button>
+        </div>`;
+      }
+      el.notesListContainer.innerHTML = html;
     }
 
-    function appendMoreNoteCards() {
-      const filtered = getFilteredAndSortedNotes();
-      if (state.renderedListCount >= filtered.length) return;
-      const prevEnd = state.renderedListCount;
-      state.renderedListCount = Math.min(filtered.length, prevEnd + LIST_PAGE_SIZE);
-      const newSlice = filtered.slice(prevEnd, state.renderedListCount);
-      const remaining = filtered.length - state.renderedListCount;
-
-      const oldSentinel = document.getElementById('notes-list-sentinel');
-      if (oldSentinel) oldSentinel.remove();
-
-      const frag = document.createElement('div');
-      frag.innerHTML = newSlice.map(buildSingleNoteCardHtml).join('') + (
-        remaining > 0
-          ? `<div id="notes-list-sentinel" style="padding:14px;text-align:center;border-bottom:1px solid var(--border);background:var(--bg-muted);">
-              <button type="button" id="load-more-notes-btn" class="btn btn-surface" style="font-size:12px;">
-                さらに読み込む（残り ${remaining.toLocaleString()} 件 / 全 ${filtered.length.toLocaleString()} 件）
-              </button>
-            </div>`
-          : `<div style="padding:12px;text-align:center;font-size:11px;color:var(--text-faint);">全 ${filtered.length.toLocaleString()} 件を表示済み</div>`
-      );
-      while (frag.firstChild) {
-        el.notesListContainer.appendChild(frag.firstChild);
+    function updateNavBackButton() {
+      if (!el.navBackNoteBtn) return;
+      while (state.noteHistory.length > 0) {
+        const prevId = state.noteHistory[state.noteHistory.length - 1];
+        if (prevId !== state.activeNoteId && state.notes.some(n => n.id === prevId)) break;
+        state.noteHistory.pop();
+      }
+      if (state.noteHistory.length > 0) {
+        const prevNote = state.notes.find(n => n.id === state.noteHistory[state.noteHistory.length - 1]);
+        el.navBackNoteBtn.classList.remove('hidden');
+        el.navBackNoteBtn.textContent = `← ${(prevNote?.title || '元のノート').slice(0, 12)}`;
+        el.navBackNoteBtn.title = `リンク元「${prevNote?.title || '無題のノート'}」へ戻る`;
+      } else {
+        el.navBackNoteBtn.classList.add('hidden');
       }
     }
 
     function renderEditor() {
+      hideImageToolbar();
+      closeWikiLinkPopup();
+      updateNavBackButton();
       const note = state.notes.find(n => n.id === state.activeNoteId);
       el.emptyEditorState.classList.toggle('hidden', Boolean(note));
       el.activeEditorContainer.classList.toggle('hidden', !note);
-      if (!note) {
-        hideImageToolbar();
-        hideWikiLinkPopup();
-        return;
-      }
+      if (!note) return;
 
-      if (el.navBackNoteBtn) {
-        el.navBackNoteBtn.classList.toggle('hidden', state.noteHistory.length === 0);
-      }
+      el.trashedNoteNoticeBar.classList.toggle('hidden', !note.trashed);
+      el.editorToolbar.classList.toggle('hidden', note.trashed);
+      el.deleteNoteBtn.classList.toggle('hidden', note.trashed);
+      el.pinNoteBtn.classList.toggle('hidden', note.trashed);
+      el.noteTitleInput.disabled = note.trashed;
+      el.noteNotebookSelect.disabled = note.trashed;
+      el.quickNewNotebookInlineBtn.classList.toggle('hidden', note.trashed);
+      el.addTagInput.classList.toggle('hidden', note.trashed);
+      el.editCreatedBtn.disabled = note.trashed;
+      el.editCreatedBtn.style.pointerEvents = note.trashed ? 'none' : 'auto';
+      el.noteRichEditor.contentEditable = note.trashed ? 'false' : 'true';
 
-      const trashed = Boolean(note.trashed);
-      el.trashedNoteNoticeBar.classList.toggle('hidden', !trashed);
-      el.editorToolbar.classList.toggle('hidden', trashed);
-      el.noteTitleInput.readOnly = trashed;
-      el.noteNotebookSelect.disabled = trashed;
-      el.addTagInput.disabled = trashed;
-      el.noteRichEditor.contentEditable = (trashed || state.isLoadingActiveContent) ? 'false' : 'true';
-
-      if (el.noteTitleInput.value !== note.title) el.noteTitleInput.value = note.title;
+      el.noteTitleInput.value = note.title || '';
+      el.noteNotebookSelect.value = note.notebook || '';
       el.noteCreatedDisplay.textContent = `作成: ${formatDate(note.createdAt)}`;
       el.noteUpdatedDisplay.textContent = `更新: ${formatDate(note.updatedAt)}`;
-      el.noteSizeDisplay.textContent = formatBytes(note.size || 0);
-      updateCharCountDisplay(state.activeNoteContentId === note.id ? stripHtmlToText(state.activeNoteContent) : (note.plainText || ''));
-
-      el.noteNotebookSelect.value = (note.notebook && Array.from(el.noteNotebookSelect.options).some(o => o.value === note.notebook)) ? note.notebook : '';
-      el.pinNoteBtn.style.color = note.pinned ? 'var(--amber-500)' : 'var(--text-faint)';
-
-      el.activeNoteTags.innerHTML = (note.tags || []).map(tag => `
-        <span class="badge badge-brand" style="font-size:11px;padding:3px 8px;">#${escapeHtml(tag)}
-          ${trashed ? '' : `<button type="button" data-remove-tag="${escapeHtml(tag)}" style="margin-left:3px;font-weight:700;">&times;</button>`}
-        </span>`).join('');
+      el.noteSizeDisplay.textContent = formatBytes(note.size || estimateNoteBytes(note));
+      el.pinNoteBtn.style.color = note.pinned ? 'var(--amber-500)' : '';
 
       if (state.isLoadingActiveContent && state.activeNoteContentId === note.id) {
-        el.noteRichEditor.innerHTML = `<div style="padding:32px;text-align:center;color:var(--text-muted);font-size:13px;">⏳ Googleドライブからノート本文を読み込んでいます...</div>`;
-      } else if (state.activeNoteContentId === note.id) {
-        const expectedHtml = state.activeNoteContent || '<p></p>';
-        if (el.noteRichEditor.innerHTML !== expectedHtml) {
-          el.noteRichEditor.innerHTML = expectedHtml;
+        el.noteRichEditor.innerHTML = `<div style="padding:36px 16px;text-align:center;color:var(--text-muted);font-size:13px;">⏳ Googleドライブからノート本文を読み込んでいます...</div>`;
+        updateCharCountDisplay('');
+      } else {
+        const displayHtml = (state.activeNoteContentId === note.id) ? state.activeNoteContent : '<p></p>';
+        if (stripTransientDarkAttrs(el.noteRichEditor.innerHTML) !== stripTransientDarkAttrs(displayHtml)) {
+          el.noteRichEditor.innerHTML = displayHtml;
         }
+        applyDarkModeReadabilityFix(el.noteRichEditor);
+        updateCharCountDisplay(stripHtmlToText(displayHtml));
       }
-      hideImageToolbar();
-      hideWikiLinkPopup();
+
+      el.activeNoteTags.innerHTML = note.tags.map(tag => `
+        <span class="badge badge-brand" style="font-size:11px;padding:3px 8px;">
+          #${escapeHtml(tag)}
+          ${note.trashed ? '' : `<button type="button" data-remove-tag="${escapeHtml(tag)}" style="margin-left:3px;opacity:0.7;">×</button>`}
+        </span>`).join('');
     }
 
     function updateTotalStorageStats() {
-      const total = state.notes.reduce((s, n) => s + (n.size || 0), 0);
+      const total = state.notes.reduce((sum, n) => sum + (n.size || estimateNoteBytes(n)), 0);
       el.totalDataSizeBadge.textContent = formatBytes(total);
-      el.totalDataSizeBadge.className = total >= TOTAL_STORAGE_WARN_THRESHOLD ? 'badge badge-amber' : 'badge badge-muted';
+      el.totalDataSizeBadge.className = total > TOTAL_STORAGE_WARN_THRESHOLD ? 'badge badge-amber' : 'badge badge-muted';
     }
 
-    function renderAll(resetPagination = true) {
+    function renderAll() {
       renderSidebar();
-      renderNotesList(resetPagination);
+      renderNotesList();
       renderEditor();
       updateTotalStorageStats();
       updateGdriveStatusUI();
     }
 
-    /* ==========================================================================
-       11. UI補助（サイドバー・テーマ・画像ツールバー・[[ノートリンク）
-       ========================================================================== */
     const toggleMobileEditor = (show) => el.editorPane.classList.toggle('mobile-open', show);
 
-    function openSidebar() { el.leftSidebar.classList.add('open'); el.sidebarBackdrop.classList.remove('hidden'); }
-    function closeSidebar() { el.leftSidebar.classList.remove('open'); el.sidebarBackdrop.classList.add('hidden'); }
-
-    function applyTheme(dark) {
+    function toggleMobileSidebar(show) {
+      el.leftSidebar.classList.toggle('open', show);
+      el.sidebarBackdrop.classList.toggle('hidden', !show);
+    }
+    function applyTheme(dark, persistUserChoice = false) {
       document.documentElement.classList.toggle('dark', dark);
       el.themeIconSun.classList.toggle('hidden', !dark);
       el.themeIconMoon.classList.toggle('hidden', dark);
-      localStorage.setItem('loosenote-theme', dark ? 'dark' : 'light');
+      if (persistUserChoice) {
+        localStorage.setItem('loosenote-theme', dark ? 'dark' : 'light');
+      }
+      if (el.noteRichEditor) {
+        applyDarkModeReadabilityFix(el.noteRichEditor);
+      }
+    }
+
+    function closeWikiLinkPopup() {
+      state.wikiLinkState = null;
+      if (el.noteLinkPopup) {
+        el.noteLinkPopup.classList.add('hidden');
+        el.noteLinkPopup.innerHTML = '';
+      }
+    }
+
+    function detectWikiLinkTrigger() {
+      const note = state.notes.find(n => n.id === state.activeNoteId);
+      if (!note || note.trashed) return closeWikiLinkPopup();
+
+      const sel = window.getSelection();
+      if (!sel || !sel.rangeCount || !sel.isCollapsed) return closeWikiLinkPopup();
+      const range = sel.getRangeAt(0);
+      const node = range.startContainer;
+      if (node.nodeType !== Node.TEXT_NODE || !el.noteRichEditor.contains(node)) return closeWikiLinkPopup();
+
+      const textBefore = node.textContent.slice(0, range.startOffset);
+      const match = textBefore.match(/\[\[([^\[\]\n]{0,40})$/);
+      if (!match) return closeWikiLinkPopup();
+
+      const query = match[1].trim().toLowerCase();
+      const matches = state.notes
+        .filter(n => !n.trashed && n.id !== state.activeNoteId)
+        .filter(n => !query || `${n.title || ''} ${n.notebook || ''}`.toLowerCase().includes(query))
+        .sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt))
+        .slice(0, 8);
+
+      if (!matches.length) return closeWikiLinkPopup();
+
+      const rect = range.getBoundingClientRect();
+      state.wikiLinkState = {
+        textNode: node,
+        startOffset: range.startOffset - match[0].length,
+        endOffset: range.startOffset,
+        matches,
+        selectedIndex: 0
+      };
+
+      el.noteLinkPopup.innerHTML = matches.map((m, idx) => `
+        <button type="button" data-wiki-idx="${idx}" class="wiki-link-item ${idx === 0 ? 'active' : ''}">
+          <span class="truncate" style="font-weight:600;">📄 ${escapeHtml(m.title || '無題のノート')}</span>
+          ${m.notebook ? `<span class="badge badge-muted truncate" style="max-width:95px;flex-shrink:0;">${escapeHtml(m.notebook)}</span>` : ''}
+        </button>`).join('');
+
+      el.noteLinkPopup.classList.remove('hidden');
+      const popupW = 290;
+      const leftPos = Math.min(window.innerWidth - popupW - 12, Math.max(12, rect.left));
+      const topPos = (rect.bottom + 220 > window.innerHeight) ? Math.max(12, rect.top - 210) : (rect.bottom + 6);
+      el.noteLinkPopup.style.left = `${leftPos}px`;
+      el.noteLinkPopup.style.top = `${topPos}px`;
+    }
+
+    function applyWikiLinkSelection(targetNote) {
+      if (!targetNote || !state.wikiLinkState) return;
+      const { textNode, startOffset, endOffset } = state.wikiLinkState;
+      closeWikiLinkPopup();
+
+      try {
+        const range = document.createRange();
+        range.setStart(textNode, startOffset);
+        range.setEnd(textNode, endOffset);
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+        document.execCommand('insertHTML', false, buildNoteLinkHtml(targetNote));
+        handleEditorContentChange(true);
+      } catch {
+        insertHtmlIntoActiveEditor(buildNoteLinkHtml(targetNote));
+      }
+    }
+
+    async function navigateToLinkedNote(targetNoteId) {
+      if (!targetNoteId) return;
+      const targetNote = state.notes.find(n => n.id === targetNoteId);
+      if (!targetNote) {
+        showToast('リンク先のノートが見つかりません（すでに完全削除された可能性があります）', 'warning');
+        return;
+      }
+
+      await flushPendingAutoSave();
+      if (state.activeNoteId && state.activeNoteId !== targetNoteId) {
+        state.noteHistory.push(state.activeNoteId);
+      }
+
+      if (targetNote.trashed) {
+        state.activeFilter = 'trash';
+      } else if (state.activeFilter !== 'all') {
+        const currentVisible = getFilteredAndSortedNotes().some(n => n.id === targetNoteId);
+        if (!currentVisible) state.activeFilter = 'all';
+      }
+
+      state.activeNoteId = targetNoteId;
+      await ensureActiveNoteContentLoaded(targetNoteId);
+      renderAll();
+      toggleMobileEditor(true);
+    }
+
+    function showQuickJumpModal() {
+      const candidates = state.notes
+        .filter(n => !n.trashed)
+        .sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+
+      return openDialog({
+        title: '⚡ クイックジャンプ (Ctrl+K / Cmd+K)',
+        message: 'タイトル・本文・タグから素早くノートへ移動します（↑↓キーで選択、Enterで開く）。',
+        bodyHtml: `
+          <div style="display:flex;flex-direction:column;gap:8px;">
+            <input id="dlg-qj-input" class="field-input" placeholder="移動したいノート名やキーワードを入力...">
+            <div id="dlg-qj-list" style="max-height:280px;overflow-y:auto;border:1px solid var(--border);border-radius:10px;padding:4px;display:flex;flex-direction:column;gap:2px;"></div>
+          </div>`,
+        onSetup(close, body) {
+          const inp = body.querySelector('#dlg-qj-input');
+          const listEl = body.querySelector('#dlg-qj-list');
+          let currentMatches = [];
+          let selectedIdx = 0;
+
+          const renderList = (q = '') => {
+            const kws = q.trim().toLowerCase().split(/\s+/).filter(Boolean);
+            currentMatches = (kws.length
+              ? candidates.filter(n => kws.every(kw => (n._searchKey || buildSearchKey(n)).includes(kw)))
+              : candidates
+            ).slice(0, 40);
+            selectedIdx = 0;
+
+            if (!currentMatches.length) {
+              listEl.innerHTML = `<div style="padding:18px;text-align:center;font-size:12px;color:var(--text-faint);">該当するノートがありません</div>`;
+              return;
+            }
+            listEl.innerHTML = currentMatches.map((n, i) => `
+              <button type="button" data-qj-idx="${i}" class="wiki-link-item ${i === 0 ? 'active' : ''}">
+                <div style="min-width:0;flex:1;">
+                  <div class="truncate" style="font-weight:700;">📄 ${escapeHtml(n.title || '無題のノート')}</div>
+                  <div class="truncate" style="font-size:11px;color:var(--text-muted);">${escapeHtml(n.snippet || '')}</div>
+                </div>
+                ${n.notebook ? `<span class="badge badge-muted truncate" style="max-width:100px;flex-shrink:0;">${escapeHtml(n.notebook)}</span>` : ''}
+              </button>`).join('');
+          };
+
+          const updateHighlight = () => {
+            listEl.querySelectorAll('.wiki-link-item').forEach((item, idx) => {
+              item.classList.toggle('active', idx === selectedIdx);
+              if (idx === selectedIdx) item.scrollIntoView({ block: 'nearest' });
+            });
+          };
+
+          renderList();
+          setTimeout(() => inp.focus(), 30);
+          inp.oninput = () => renderList(inp.value);
+          inp.onkeydown = (e) => {
+            if (!currentMatches.length) return;
+            if (e.key === 'ArrowDown') {
+              e.preventDefault();
+              selectedIdx = (selectedIdx + 1) % currentMatches.length;
+              updateHighlight();
+            } else if (e.key === 'ArrowUp') {
+              e.preventDefault();
+              selectedIdx = (selectedIdx - 1 + currentMatches.length) % currentMatches.length;
+              updateHighlight();
+            } else if (e.key === 'Enter') {
+              e.preventDefault();
+              close(currentMatches[selectedIdx]);
+            }
+          };
+
+          listEl.onclick = (e) => {
+            const btn = e.target.closest('[data-qj-idx]');
+            if (btn) {
+              const target = currentMatches[Number(btn.dataset.qjIdx)];
+              if (target) close(target);
+            }
+          };
+        },
+        rightBtns: [{ label: '閉じる', cls: 'btn-muted', value: null }]
+      }).then(async (picked) => {
+        if (picked) {
+          await navigateToLinkedNote(picked.id);
+        }
+      });
     }
 
     function hideImageToolbar() {
@@ -4315,274 +4657,54 @@ ${contentHtml || '<p></p>'}
       el.imageFloatingToolbar.classList.add('hidden');
     }
 
-    function showImageToolbar(img) {
-      if (state.activeEditorImg && state.activeEditorImg !== img) state.activeEditorImg.classList.remove('selected-editor-img');
-      state.activeEditorImg = img;
-      img.classList.add('selected-editor-img');
-      const r = img.getBoundingClientRect();
-      el.imageFloatingToolbar.style.top = `${Math.max(56, r.top - 42)}px`;
-      el.imageFloatingToolbar.style.left = `${Math.min(window.innerWidth - 260, Math.max(12, r.left))}px`;
+    function positionImageToolbar(img) {
+      const rect = img.getBoundingClientRect();
       el.imageFloatingToolbar.classList.remove('hidden');
+      el.imageFloatingToolbar.style.top = `${Math.max(10, rect.top - 44)}px`;
+      el.imageFloatingToolbar.style.left = `${Math.max(10, Math.min(window.innerWidth - 240, rect.left))}px`;
     }
 
-    const openLightbox = (src) => { el.imgLightboxPreview.src = src; el.imageLightboxModal.classList.remove('hidden'); };
-    const closeLightbox = () => { el.imageLightboxModal.classList.add('hidden'); el.imgLightboxPreview.src = ''; };
-
-    async function navigateToLinkedNote(targetNoteId) {
-      const target = state.notes.find(n => n.id === targetNoteId);
-      if (!target) {
-        return showToast('リンク先のノートが見つかりません（完全削除された可能性があります）', 'warning');
-      }
-      await flushPendingAutoSave();
-      if (state.activeNoteId && state.activeNoteId !== target.id) {
-        state.noteHistory.push(state.activeNoteId);
-      }
-      if (target.trashed) {
-        state.activeFilter = 'trash';
-        showToast('リンク先のノートはゴミ箱内にあります', 'info');
-      } else if (state.activeFilter !== 'all') {
-        state.activeFilter = 'all';
-      }
-      state.activeNoteId = target.id;
-      renderAll();
-      await ensureActiveNoteContentLoaded(target.id);
-      toggleMobileEditor(true);
-    }
-
-    async function navigateBackNoteHistory() {
-      if (!state.noteHistory.length) return;
-      await flushPendingAutoSave();
-      while (state.noteHistory.length > 0) {
-        const prevId = state.noteHistory.pop();
-        const prevNote = state.notes.find(n => n.id === prevId);
-        if (prevNote) {
-          state.activeFilter = prevNote.trashed ? 'trash' : 'all';
-          state.activeNoteId = prevNote.id;
-          renderAll();
-          await ensureActiveNoteContentLoaded(prevNote.id);
-          toggleMobileEditor(true);
-          return;
-        }
-      }
-      renderEditor();
-    }
-
-    function hideWikiLinkPopup() {
-      state.wikiLinkState = null;
-      if (el.noteLinkPopup) {
-        el.noteLinkPopup.classList.add('hidden');
-        el.noteLinkPopup.innerHTML = '';
-      }
-    }
-
-    function updateWikiLinkPopup() {
-      const note = state.notes.find(n => n.id === state.activeNoteId);
-      if (!note || note.trashed || !el.noteRichEditor.contains(document.activeElement)) return hideWikiLinkPopup();
-
-      const sel = window.getSelection();
-      if (!sel || !sel.rangeCount || !sel.isCollapsed) return hideWikiLinkPopup();
-      const range = sel.getRangeAt(0);
-      const node = range.startContainer;
-      if (node.nodeType !== Node.TEXT_NODE || !el.noteRichEditor.contains(node)) return hideWikiLinkPopup();
-
-      const textBefore = node.textContent.slice(0, range.startOffset);
-      const match = textBefore.match(/\[\[([^\[\]\r\n]{0,40})$/);
-      if (!match) return hideWikiLinkPopup();
-
-      const query = match[1].trim().toLowerCase();
-      const candidates = state.notes
-        .filter(n => !n.trashed && n.id !== state.activeNoteId)
-        .filter(n => !query || `${n.title || ''} ${n.notebook || ''}`.toLowerCase().includes(query))
-        .sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt))
-        .slice(0, 8);
-
-      if (!candidates.length) return hideWikiLinkPopup();
-
-      const prevSelected = state.wikiLinkState?.selectedIndex || 0;
-      state.wikiLinkState = {
-        textNode: node,
-        startOffset: match.index,
-        endOffset: range.startOffset,
-        candidates,
-        selectedIndex: Math.min(prevSelected, candidates.length - 1)
+    function setupAppIcons() {
+      const svgEl = document.getElementById('brand-elephant-svg');
+      if (!svgEl || !el.appTouchIcon) return;
+      const svgStr = new XMLSerializer().serializeToString(svgEl);
+      const svgUrl = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgStr);
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = 180;
+        canvas.height = 180;
+        canvas.getContext('2d').drawImage(img, 0, 0, 180, 180);
+        el.appTouchIcon.href = canvas.toDataURL('image/png');
       };
-
-      const rect = range.getBoundingClientRect();
-      el.noteLinkPopup.style.top = `${Math.min(window.innerHeight - 240, Math.max(60, (rect.bottom || 180) + 6))}px`;
-      el.noteLinkPopup.style.left = `${Math.min(window.innerWidth - 310, Math.max(12, rect.left || 40))}px`;
-      el.noteLinkPopup.innerHTML = candidates.map((c, idx) => `
-        <button type="button" data-wiki-idx="${idx}" class="wiki-link-item ${idx === state.wikiLinkState.selectedIndex ? 'active' : ''}">
-          <span class="truncate" style="font-weight:600;">📄 ${escapeHtml(c.title || '無題のノート')}</span>
-          ${c.notebook ? `<span class="badge badge-muted truncate" style="max-width:90px;flex-shrink:0;">${escapeHtml(c.notebook)}</span>` : ''}
-        </button>`).join('');
-      el.noteLinkPopup.classList.remove('hidden');
-    }
-
-    function applyWikiLinkCandidate(index) {
-      if (!state.wikiLinkState) return;
-      const { textNode, startOffset, endOffset, candidates } = state.wikiLinkState;
-      const chosen = candidates[index];
-      if (!chosen || !el.noteRichEditor.contains(textNode)) return hideWikiLinkPopup();
-
-      const range = document.createRange();
-      range.setStart(textNode, startOffset);
-      range.setEnd(textNode, endOffset);
-      range.deleteContents();
-
-      const temp = document.createElement('div');
-      temp.innerHTML = buildNoteLinkHtml(chosen);
-      const frag = document.createDocumentFragment();
-      let lastNode = null;
-      while (temp.firstChild) {
-        lastNode = frag.appendChild(temp.firstChild);
-      }
-      range.insertNode(frag);
-
-      if (lastNode) {
-        const sel = window.getSelection();
-        const afterRange = document.createRange();
-        afterRange.setStartAfter(lastNode);
-        afterRange.collapse(true);
-        sel.removeAllRanges();
-        sel.addRange(afterRange);
-      }
-
-      hideWikiLinkPopup();
-      handleEditorContentChange(true);
+      img.src = svgUrl;
     }
 
     /* ==========================================================================
-       12. 全イベントリスナー登録（Ctrl+K クイックジャンプ対応）
+       12. イベントリスナー登録＆初期化
        ========================================================================== */
-    function showQuickJumpModal() {
-      const quickActions = [
-        { id: '__act_new', label: '➕ 新しいノートを作成', badge: '操作', run: () => createNewNote() },
-        { id: '__act_sync', label: '☁️ Googleドライブと今すぐ同期', badge: '操作', run: () => syncWithGoogleDrive(true) },
-        { id: '__act_theme', label: '🌓 ライト / ダークモード切替', badge: '表示', run: () => el.themeToggleBtn.click() }
-      ];
-      const allNbs = Array.from(getAllNotebooksMap().values()).map(nb => ({
-        id: `__nb_${nb.name}`,
-        label: `📓 ノートブックへ移動: ${nb.stack ? `${nb.stack} / ${nb.name}` : nb.name}`,
-        badge: `${nb.count}件`,
-        run: async () => {
-          await flushPendingAutoSave();
-          state.activeFilter = `notebook:${nb.name}`;
-          const first = getFilteredAndSortedNotes()[0]?.id || null;
-          state.activeNoteId = first;
-          await ensureActiveNoteContentLoaded(first);
-          renderAll(true);
-        }
-      }));
-      const activeNotes = state.notes
-        .filter(n => !n.trashed)
-        .sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt))
-        .map(n => ({
-          id: n.id,
-          label: `📄 ${n.title || '無題のノート'}`,
-          sub: n.snippet || '',
-          badge: n.notebook || '未分類',
-          run: async () => {
-            await flushPendingAutoSave();
-            state.activeNoteId = n.id;
-            renderNotesList(false);
-            await ensureActiveNoteContentLoaded(n.id);
-            toggleMobileEditor(true);
-          }
-        }));
+    function bindAllEvents() {
+      el.themeToggleBtn.onclick = () => applyTheme(!document.documentElement.classList.contains('dark'), true);
+      el.openSidebarBtn.onclick = () => toggleMobileSidebar(true);
+      el.closeSidebarBtn.onclick = () => toggleMobileSidebar(false);
+      el.sidebarBackdrop.onclick = () => toggleMobileSidebar(false);
+      el.mobileBackBtn.onclick = () => toggleMobileEditor(false);
 
-      const allCommands = [...quickActions, ...allNbs, ...activeNotes];
-
-      return openDialog({
-        title: '⚡ クイックジャンプ (Ctrl+K / Cmd+K)',
-        message: 'ノート名・ノートブック・コマンドをキーワードで絞り込み、Enterで瞬時に移動します。',
-        bodyHtml: `
-          <div style="display:flex;flex-direction:column;gap:8px;">
-            <input id="dlg-qj-input" class="field-input" placeholder="移動先のノート名・ノートブック・操作を入力...">
-            <div id="dlg-qj-list" style="max-height:280px;overflow-y:auto;border:1px solid var(--border);border-radius:10px;padding:4px;display:flex;flex-direction:column;gap:2px;"></div>
-          </div>`,
-        onSetup(close, body) {
-          const inp = body.querySelector('#dlg-qj-input');
-          const listEl = body.querySelector('#dlg-qj-list');
-          let currentFiltered = [];
-          let selectedIdx = 0;
-
-          const renderItems = (q = '') => {
-            const kws = q.trim().toLowerCase().split(/\s+/).filter(Boolean);
-            currentFiltered = kws.length
-              ? allCommands.filter(c => kws.every(k => `${c.label} ${c.sub || ''} ${c.badge}`.toLowerCase().includes(k))).slice(0, 40)
-              : allCommands.slice(0, 30);
-            selectedIdx = 0;
-
-            if (!currentFiltered.length) {
-              listEl.innerHTML = `<div style="padding:18px;text-align:center;font-size:12px;color:var(--text-faint);">一致する候補がありません</div>`;
-              return;
-            }
-            listEl.innerHTML = currentFiltered.map((item, idx) => `
-              <button type="button" data-qj-idx="${idx}" class="wiki-link-item ${idx === 0 ? 'active' : ''}">
-                <span class="truncate" style="font-weight:600;">${escapeHtml(item.label)}</span>
-                <span class="badge badge-muted truncate" style="max-width:110px;flex-shrink:0;">${escapeHtml(item.badge)}</span>
-              </button>`).join('');
-          };
-
-          const updateHighlight = () => {
-            const btns = listEl.querySelectorAll('[data-qj-idx]');
-            btns.forEach((b, i) => {
-              b.classList.toggle('active', i === selectedIdx);
-              if (i === selectedIdx) b.scrollIntoView({ block: 'nearest' });
-            });
-          };
-
-          renderItems();
-          setTimeout(() => inp.focus(), 30);
-
-          inp.oninput = () => renderItems(inp.value);
-          inp.onkeydown = (e) => {
-            if (!currentFiltered.length) return;
-            if (e.key === 'ArrowDown') {
-              e.preventDefault();
-              selectedIdx = (selectedIdx + 1) % currentFiltered.length;
-              updateHighlight();
-            } else if (e.key === 'ArrowUp') {
-              e.preventDefault();
-              selectedIdx = (selectedIdx - 1 + currentFiltered.length) % currentFiltered.length;
-              updateHighlight();
-            } else if (e.key === 'Enter') {
-              e.preventDefault();
-              const chosen = currentFiltered[selectedIdx];
-              close(null);
-              if (chosen) chosen.run();
-            }
-          };
-
-          listEl.onclick = (e) => {
-            const btn = e.target.closest('[data-qj-idx]');
-            if (btn) {
-              const chosen = currentFiltered[Number(btn.dataset.qjIdx)];
-              close(null);
-              if (chosen) chosen.run();
-            }
-          };
-        },
-        rightBtns: [{ label: '閉じる (ESC)', cls: 'btn-muted', value: null }]
-      });
-    }
-
-    function setupEventListeners() {
-      el.openSidebarBtn.onclick = openSidebar;
-      el.closeSidebarBtn.onclick = closeSidebar;
-      el.sidebarBackdrop.onclick = closeSidebar;
-      el.themeToggleBtn.onclick = () => applyTheme(!document.documentElement.classList.contains('dark'));
-
-      el.newNoteBtn.onclick = () => { createNewNote(); closeSidebar(); };
-      el.emptyCreateBtn.onclick = createNewNote;
+      el.navBackNoteBtn.onclick = async () => {
+        const prevId = state.noteHistory.pop();
+        if (!prevId) return;
+        await flushPendingAutoSave();
+        state.activeNoteId = prevId;
+        await ensureActiveNoteContentLoaded(prevId);
+        renderAll();
+      };
 
       el.connectGdriveBtn.onclick = connectGoogleDriveFlow;
       el.syncGdriveNowBtn.onclick = () => syncWithGoogleDrive(true);
       el.abortSyncBtn.onclick = () => {
         state.abortSyncRequested = true;
-        showToast('同期の中断をリクエストしました（現在の処理完了後に安全停止します）', 'info');
+        showToast('現在のバッチ完了後に同期を中断します...', 'info', 2500);
       };
-
       el.gdriveSettingsBtn.onclick = async () => {
         const res = await showGdriveSettingsModal();
         if (!res) return;
@@ -4596,165 +4718,189 @@ ${contentHtml || '<p></p>'}
           state.gdriveFolderCache.clear();
           updateGdriveStatusUI();
           showToast('Googleドライブからログアウトしました', 'info');
-          return;
-        }
-        if (res.action === 'full_resync') {
+        } else if (res.action === 'full_resync') {
           await syncWithGoogleDrive(true);
-          return;
-        }
-        if (res.action === 'clear_all') {
+        } else if (res.action === 'clear_all') {
           await clearAllEnvironment();
-          return;
-        }
-        if (res.action === 'save') {
+        } else if (res.action === 'save') {
+          const folderChanged = state.gdriveFolderName !== res.folderName;
           state.gdriveClientId = res.clientId;
           state.gdriveFolderName = res.folderName;
           state.gdriveAttachFolderName = res.attachFolderName;
           state.imageOptimizeMode = res.imageOptimizeMode || 'auto';
+          state.gdriveRootFolderId = null;
+          state.gdriveFolderCache.clear();
           localStorage.setItem(LS_CLIENT_ID_KEY, state.gdriveClientId);
           localStorage.setItem(LS_FOLDER_NAME_KEY, state.gdriveFolderName);
           localStorage.setItem(LS_ATTACH_FOLDER_KEY, state.gdriveAttachFolderName);
           localStorage.setItem(LS_IMAGE_OPT_KEY, state.imageOptimizeMode);
-          updateGdriveStatusUI();
-          try {
-            await requestGoogleAccessToken('');
-            await syncWithGoogleDrive(true);
-          } catch (err) {
-            state.lastSyncError = err.message || '接続に失敗しました';
-            updateGdriveStatusUI();
-            showToast(state.lastSyncError, 'error', 7000);
+          if (folderChanged) {
+            await clearDriveChangeToken();
           }
+          updateGdriveStatusUI();
+          await connectGoogleDriveFlow();
         }
       };
 
-      el.quickJumpBtn.onclick = showQuickJumpModal;
-
+      el.newNoteBtn.onclick = createNewNote;
+      el.emptyCreateBtn.onclick = createNewNote;
       el.importEnexBtn.onclick = () => el.enexFileInput.click();
-      el.enexFileInput.onchange = (e) => { handleDroppedOrSelectedFiles(e.target.files, false); e.target.value = ''; closeSidebar(); };
+      el.enexFileInput.onchange = async (e) => { await handleDroppedOrSelectedFiles(e.target.files, false); e.target.value = ''; };
 
-      el.createNotebookBtn.onclick = async () => {
-        const res = await showNotebookModal({ title: '新しいノートブック・スタックを作成' });
-        if (res?.action === 'save') {
-          await createOrUpdateNotebook(null, res.notebook, res.stack);
-          showToast(`ノートブック「${res.notebook}」を作成しました`, 'success');
-        }
+      el.embedMediaBtn.onmousedown = saveEditorSelection;
+      el.embedMediaBtn.onclick = () => el.embedMediaInput.click();
+      el.embedMediaInput.onchange = async (e) => { await handleDroppedOrSelectedFiles(e.target.files, true); e.target.value = ''; };
+
+      el.insertLinkCardBtn.onmousedown = saveEditorSelection;
+      el.insertLinkCardBtn.onclick = async () => {
+        if (!state.activeNoteId) return;
+        const data = await showLinkCardModal();
+        if (data) insertHtmlIntoActiveEditor(buildLinkOperationCardHtml(data));
       };
 
-      el.quickNewNotebookInlineBtn.onclick = async () => {
-        const res = await showNotebookModal({ title: '新規ノートブック作成＆割り当て' });
-        if (res?.action === 'save') {
-          await createOrUpdateNotebook(null, res.notebook, res.stack);
-          if (state.activeNoteId) await moveNoteToNotebook(state.activeNoteId, res.notebook);
+      el.insertNoteLinkBtn.onmousedown = saveEditorSelection;
+      el.insertNoteLinkBtn.onclick = async () => {
+        if (!state.activeNoteId) return;
+        const targetNote = await showNoteLinkPickerModal();
+        if (targetNote) insertHtmlIntoActiveEditor(buildNoteLinkHtml(targetNote));
+      };
+
+      el.noteLinkPopup.onclick = (e) => {
+        const btn = e.target.closest('[data-wiki-idx]');
+        if (btn && state.wikiLinkState) {
+          const target = state.wikiLinkState.matches[Number(btn.dataset.wikiIdx)];
+          if (target) applyWikiLinkSelection(target);
         }
       };
 
       el.leftSidebar.onclick = async (e) => {
-        const filterBtn = e.target.closest('.filter-btn');
+        const toggleBtn = e.target.closest('[data-toggle-stack]');
+        if (toggleBtn) {
+          const st = toggleBtn.dataset.toggleStack;
+          state.collapsedStacks.has(st) ? state.collapsedStacks.delete(st) : state.collapsedStacks.add(st);
+          return renderSidebar();
+        }
+        const editStackBtn = e.target.closest('[data-edit-stack]');
+        if (editStackBtn) {
+          e.stopPropagation();
+          const oldStack = editStackBtn.dataset.editStack;
+          const res = await showStackModal(oldStack);
+          if (res?.action === 'ungroup') await renameOrUngroupStack(oldStack, '');
+          else if (res?.action === 'rename' && res.newStack !== oldStack) await renameOrUngroupStack(oldStack, res.newStack);
+          return;
+        }
+        const editNbBtn = e.target.closest('[data-edit-nb]');
+        if (editNbBtn) {
+          e.stopPropagation();
+          const oldName = editNbBtn.dataset.editNb;
+          const cur = getAllNotebooksMap().get(oldName) || { name: oldName, stack: '' };
+          const res = await showNotebookModal({ title: 'ノートブック・スタック設定', initialNotebook: cur.name, initialStack: cur.stack, isEdit: true });
+          if (res?.action === 'delete') await deleteNotebook(oldName);
+          else if (res?.action === 'save') {
+            await createOrUpdateNotebook(oldName, res.notebook, res.stack);
+            showToast('ノートブック設定を更新しました', 'success');
+          }
+          return;
+        }
+        const filterBtn = e.target.closest('[data-filter]');
         if (filterBtn) {
           await flushPendingAutoSave();
           state.activeFilter = filterBtn.dataset.filter;
-          const nextFirst = getFilteredAndSortedNotes()[0]?.id || null;
-          state.activeNoteId = nextFirst;
-          await ensureActiveNoteContentLoaded(nextFirst);
-          renderAll(true);
-          closeSidebar();
-          return;
-        }
-        const toggleStack = e.target.closest('[data-toggle-stack]');
-        if (toggleStack) {
-          const st = toggleStack.dataset.toggleStack;
-          state.collapsedStacks.has(st) ? state.collapsedStacks.delete(st) : state.collapsedStacks.add(st);
-          renderSidebar();
-          return;
-        }
-        const editStack = e.target.closest('[data-edit-stack]');
-        if (editStack) {
-          e.stopPropagation();
-          const oldSt = editStack.dataset.editStack;
-          const res = await showStackModal(oldSt);
-          if (res?.action === 'rename' && res.newStack !== oldSt) await renameOrUngroupStack(oldSt, res.newStack);
-          if (res?.action === 'ungroup') await renameOrUngroupStack(oldSt, '');
-          return;
-        }
-        const editNb = e.target.closest('[data-edit-nb]');
-        if (editNb) {
-          e.stopPropagation();
-          const oldNb = editNb.dataset.editNb;
-          const res = await showNotebookModal({ title: 'ノートブックの編集・移動', initialNotebook: oldNb, initialStack: getAllNotebooksMap().get(oldNb)?.stack || '', isEdit: true });
-          if (res?.action === 'delete') await deleteNotebook(oldNb);
-          else if (res?.action === 'save') {
-            await createOrUpdateNotebook(oldNb, res.notebook, res.stack);
-            showToast(`ノートブック「${res.notebook}」を更新しました`, 'success');
+          state.selectedNoteIds.clear();
+          state.renderedListCount = LIST_PAGE_SIZE;
+          const filtered = getFilteredAndSortedNotes();
+          if (!filtered.some(n => n.id === state.activeNoteId)) {
+            state.activeNoteId = filtered[0]?.id || null;
+            await ensureActiveNoteContentLoaded(state.activeNoteId);
           }
+          renderAll();
+          toggleMobileSidebar(false);
         }
       };
+
+      const openNewNotebookDialog = async (assignToActive) => {
+        const res = await showNotebookModal({ title: '新しいノートブック・スタックを作成', initialStack: state.activeFilter.startsWith('stack:') ? state.activeFilter.slice(6) : '' });
+        if (res?.action === 'save') {
+          await createOrUpdateNotebook(null, res.notebook, res.stack);
+          if (assignToActive && state.activeNoteId) await moveNoteToNotebook(state.activeNoteId, res.notebook);
+          else showToast(`ノートブック「${res.notebook}」を作成しました`, 'success');
+        }
+      };
+      el.createNotebookBtn.onclick = () => openNewNotebookDialog(false);
+      el.quickNewNotebookInlineBtn.onclick = () => openNewNotebookDialog(true);
+      el.noteNotebookSelect.onchange = (e) => { if (state.activeNoteId) moveNoteToNotebook(state.activeNoteId, e.target.value); };
+
+      el.quickJumpBtn.onclick = () => showQuickJumpModal();
 
       el.searchInput.oninput = (e) => {
         state.searchQuery = e.target.value;
         el.clearSearchBtn.classList.toggle('hidden', !state.searchQuery);
         clearTimeout(state.searchDebounceTimer);
         state.searchDebounceTimer = setTimeout(() => {
-          renderNotesList(true);
-        }, 150);
+          state.renderedListCount = LIST_PAGE_SIZE;
+          renderNotesList();
+        }, 120);
       };
       el.clearSearchBtn.onclick = () => {
-        clearTimeout(state.searchDebounceTimer);
         state.searchQuery = '';
         el.searchInput.value = '';
         el.clearSearchBtn.classList.add('hidden');
-        renderNotesList(true);
+        state.renderedListCount = LIST_PAGE_SIZE;
+        renderNotesList();
       };
       el.sortSelect.onchange = (e) => {
         state.sortBy = e.target.value;
         localStorage.setItem(LS_SORT_KEY, state.sortBy);
-        renderNotesList(true);
+        state.renderedListCount = LIST_PAGE_SIZE;
+        renderNotesList();
       };
-      el.emptyTrashBtn.onclick = emptyTrash;
-
       el.toggleCompactListBtn.onclick = () => {
         state.isCompactList = !state.isCompactList;
-        localStorage.setItem('loosenote-compact', state.isCompactList);
-        el.iconViewCompact.classList.toggle('hidden', state.isCompactList);
-        el.iconViewCard.classList.toggle('hidden', !state.isCompactList);
-        renderNotesList(false);
+        localStorage.setItem('loosenote-compact', state.isCompactList ? 'true' : 'false');
+        renderNotesList();
       };
 
       el.notesListContainer.onscroll = () => {
         const sc = el.notesListContainer;
         if (sc.scrollTop + sc.clientHeight >= sc.scrollHeight - 160) {
-          appendMoreNoteCards();
+          const total = getFilteredAndSortedNotes().length;
+          if (state.renderedListCount < total) {
+            state.renderedListCount += LIST_PAGE_SIZE;
+            renderNotesList();
+          }
         }
       };
 
       el.notesListContainer.onclick = async (e) => {
         if (e.target.closest('#load-more-notes-btn')) {
-          appendMoreNoteCards();
+          state.renderedListCount += LIST_PAGE_SIZE;
+          renderNotesList();
           return;
         }
-        const cb = e.target.closest('[data-check-note]');
+        const cb = e.target.closest('[data-check-id]');
         if (cb) {
           e.stopPropagation();
-          const id = cb.dataset.checkNote;
-          cb.checked ? state.selectedNoteIds.add(id) : state.selectedNoteIds.delete(id);
-          renderNotesList(false);
-          return;
+          cb.checked ? state.selectedNoteIds.add(cb.dataset.checkId) : state.selectedNoteIds.delete(cb.dataset.checkId);
+          return renderNotesList();
         }
         const card = e.target.closest('[data-note-id]');
         if (card) {
-          await flushPendingAutoSave();
-          const targetId = card.dataset.noteId;
-          state.activeNoteId = targetId;
-          renderNotesList(false);
-          await ensureActiveNoteContentLoaded(targetId);
+          const nextId = card.dataset.noteId;
+          if (state.activeNoteId !== nextId) {
+            await flushPendingAutoSave();
+            state.activeNoteId = nextId;
+            renderNotesList();
+            await ensureActiveNoteContentLoaded(nextId);
+          }
           toggleMobileEditor(true);
         }
       };
 
       el.bulkSelectAllCheckbox.onchange = (e) => {
-        getFilteredAndSortedNotes().forEach(n => e.target.checked ? state.selectedNoteIds.add(n.id) : state.selectedNoteIds.delete(n.id));
-        renderNotesList(false);
+        const notes = getFilteredAndSortedNotes();
+        e.target.checked ? notes.forEach(n => state.selectedNoteIds.add(n.id)) : state.selectedNoteIds.clear();
+        renderNotesList();
       };
-
       el.bulkMoveBtn.onclick = async () => {
         const ids = Array.from(state.selectedNoteIds);
         if (!ids.length) return;
@@ -4764,21 +4910,19 @@ ${contentHtml || '<p></p>'}
         state.selectedNoteIds.clear();
         await saveAllMetaStateToDB();
         renderAll();
-        if (isGdriveConnected()) syncWithGoogleDrive(false);
+        if (isGdriveConnected()) await syncWithGoogleDrive(false);
         showToast(`${ids.length} 件のノートを移動しました`, 'success');
       };
-
       el.bulkTagBtn.onclick = async () => {
         const ids = Array.from(state.selectedNoteIds);
         if (!ids.length) return;
         const tag = await showBulkActionModal('tag', ids.length);
         if (!tag) return;
-        const now = new Date().toISOString();
         for (const id of ids) {
           const n = state.notes.find(x => x.id === id);
-          if (n) {
-            if (!n.tags.includes(tag)) n.tags.push(tag);
-            n.updatedAt = now;
+          if (n && !n.tags.includes(tag)) {
+            n.tags.push(tag);
+            n.updatedAt = new Date().toISOString();
             n.needsSync = true;
             n.metaHtmlDirty = true;
             n._searchKey = buildSearchKey(n);
@@ -4787,81 +4931,33 @@ ${contentHtml || '<p></p>'}
         state.selectedNoteIds.clear();
         await saveAllMetaStateToDB();
         renderAll();
-        if (isGdriveConnected()) syncWithGoogleDrive(false);
-        showToast(`${ids.length} 件に「#${tag}」を追加しました`, 'success');
+        if (isGdriveConnected()) await syncWithGoogleDrive(false);
+        showToast(`${ids.length} 件のノートに「#${tag}」を追加しました`, 'success');
       };
-
       el.bulkTrashBtn.onclick = async () => {
         const ids = Array.from(state.selectedNoteIds);
         if (!ids.length) return;
         if (state.activeFilter === 'trash') {
-          if (!await showConfirmModal({ title: '選択ノートの完全削除', message: `選択した ${ids.length} 件を完全に削除しますか？`, confirmText: '完全に削除', isDanger: true })) return;
+          if (!await showConfirmModal({ title: '選択ノートを完全削除', message: `選択中の ${ids.length} 件を完全に削除しますか？\nGoogleドライブ上のファイルも削除されます。`, confirmText: '完全に削除', isDanger: true })) return;
           for (const id of ids) {
             const target = state.notes.find(n => n.id === id);
             if (target?.gdriveFileId) await deleteNoteFromGoogleDrive(target.gdriveFileId);
             await deleteSingleNoteFromDB(id);
           }
-          state.notes = state.notes.filter(n => !state.selectedNoteIds.has(n.id));
-          state.selectedNoteIds.clear();
-          if (!state.notes.some(n => n.id === state.activeNoteId)) {
-            state.activeNoteId = getFilteredAndSortedNotes()[0]?.id || null;
-            await ensureActiveNoteContentLoaded(state.activeNoteId);
-          }
-          await saveAllMetaStateToDB();
-          renderAll();
-          showToast(`${ids.length} 件を完全に削除しました`, 'info');
+          state.notes = state.notes.filter(n => !ids.includes(n.id));
         } else {
           for (const id of ids) await moveNoteToTrash(id, true);
-          state.selectedNoteIds.clear();
-          if (state.notes.find(n => n.id === state.activeNoteId)?.trashed) {
-            state.activeNoteId = getFilteredAndSortedNotes()[0]?.id || null;
-            await ensureActiveNoteContentLoaded(state.activeNoteId);
-          }
-          await saveAllMetaStateToDB();
-          renderAll();
-          if (isGdriveConnected()) syncWithGoogleDrive(false);
-          showToast(`${ids.length} 件をゴミ箱へ移動しました`, 'info');
         }
+        state.selectedNoteIds.clear();
+        if (!state.notes.some(n => n.id === state.activeNoteId)) {
+          state.activeNoteId = getFilteredAndSortedNotes()[0]?.id || null;
+          await ensureActiveNoteContentLoaded(state.activeNoteId);
+        }
+        await saveAllMetaStateToDB();
+        renderAll();
+        if (state.activeFilter !== 'trash' && isGdriveConnected()) await syncWithGoogleDrive(false);
+        showToast(`${ids.length} 件のノートを処理しました`, 'info');
       };
-
-      el.mobileBackBtn.onclick = () => toggleMobileEditor(false);
-      el.navBackNoteBtn.onclick = navigateBackNoteHistory;
-      el.restoreTrashedNoteBtn.onclick = () => state.activeNoteId && restoreNoteFromTrash(state.activeNoteId);
-      el.permanentDeleteNoteBtn.onclick = () => state.activeNoteId && permanentlyDeleteNote(state.activeNoteId);
-
-      el.noteNotebookSelect.onchange = (e) => state.activeNoteId && moveNoteToNotebook(state.activeNoteId, e.target.value);
-
-      el.editCreatedBtn.onclick = async () => {
-        const note = state.notes.find(n => n.id === state.activeNoteId);
-        if (!note || note.trashed) return;
-        const nextIso = await showEditCreatedDateModal(note.createdAt);
-        if (!nextIso) return;
-        note.createdAt = nextIso;
-        note.updatedAt = new Date().toISOString();
-        note.needsSync = true;
-        note.metaHtmlDirty = true;
-        el.noteCreatedDisplay.textContent = `作成: ${formatDate(note.createdAt)}`;
-        el.noteUpdatedDisplay.textContent = `更新: ${formatDate(note.updatedAt)}`;
-        await saveSingleNoteMetaToDB(note);
-        await uploadNoteToGoogleDrive(note);
-        renderNotesList(false);
-        showToast('ノートの作成日時を変更しました', 'success');
-      };
-
-      el.pinNoteBtn.onclick = async () => {
-        const note = state.notes.find(n => n.id === state.activeNoteId);
-        if (!note || note.trashed) return;
-        note.pinned = !note.pinned;
-        note.updatedAt = new Date().toISOString();
-        note.needsSync = true;
-        note.metaHtmlDirty = true;
-        await saveSingleNoteMetaToDB(note);
-        await uploadNoteToGoogleDrive(note);
-        renderAll(false);
-      };
-
-      el.downloadSingleHtmlBtn.onclick = downloadSingleNoteAsHTML;
-      el.deleteNoteBtn.onclick = () => state.activeNoteId && moveNoteToTrash(state.activeNoteId);
 
       el.noteTitleInput.oninput = (e) => {
         const note = state.notes.find(n => n.id === state.activeNoteId);
@@ -4869,132 +4965,69 @@ ${contentHtml || '<p></p>'}
         note.title = e.target.value;
         note.updatedAt = new Date().toISOString();
         note.needsSync = true;
-        note.metaHtmlDirty = true;
         note._searchKey = buildSearchKey(note);
         updateSingleNoteCardInList(note);
         scheduleAutoSave();
       };
 
-      el.addTagInput.onkeydown = async (e) => {
-        if (e.key === 'Enter' && e.target.value.trim()) {
-          e.preventDefault();
-          const note = state.notes.find(n => n.id === state.activeNoteId);
-          const tag = e.target.value.trim().replace(/^#+/, '');
-          if (note && tag && !note.tags.includes(tag)) {
-            note.tags.push(tag);
-            note.updatedAt = new Date().toISOString();
-            note.needsSync = true;
-            note.metaHtmlDirty = true;
-            note._searchKey = buildSearchKey(note);
-            await saveSingleNoteMetaToDB(note);
-            await uploadNoteToGoogleDrive(note);
-            renderEditor();
-            renderNotesList(false);
-          }
-          e.target.value = '';
-        }
-      };
-
-      el.activeNoteTags.onclick = async (e) => {
-        const btn = e.target.closest('[data-remove-tag]');
+      el.editCreatedBtn.onclick = async () => {
         const note = state.notes.find(n => n.id === state.activeNoteId);
-        if (btn && note) {
-          note.tags = note.tags.filter(t => t !== btn.dataset.removeTag);
-          note.updatedAt = new Date().toISOString();
-          note.needsSync = true;
-          note.metaHtmlDirty = true;
-          note._searchKey = buildSearchKey(note);
-          await saveSingleNoteMetaToDB(note);
-          await uploadNoteToGoogleDrive(note);
-          renderEditor();
-          renderNotesList(false);
-        }
+        if (!note || note.trashed) return;
+        const newIso = await showEditCreatedDateModal(note.createdAt);
+        if (!newIso) return;
+        note.createdAt = newIso;
+        note.updatedAt = new Date().toISOString();
+        note.needsSync = true;
+        note.metaHtmlDirty = true;
+        el.noteCreatedDisplay.textContent = `作成: ${formatDate(note.createdAt)}`;
+        await executeSaveForNote(note.id);
+        renderNotesList();
+        showToast('ノートの作成日時を変更しました', 'success');
       };
-
-      document.querySelectorAll('.toolbar-btn').forEach(btn => {
-        btn.onmousedown = (e) => e.preventDefault();
-        btn.onclick = () => {
-          el.noteRichEditor.focus();
-          document.execCommand(btn.dataset.cmd, false, btn.dataset.val || null);
-          handleEditorContentChange(true);
-        };
-      });
-
-      el.insertCheckboxBtn.onmousedown = (e) => e.preventDefault();
-      el.insertCheckboxBtn.onclick = () => insertHtmlIntoActiveEditor('<input type="checkbox" style="margin-right:6px;"> ');
-
-      el.insertTableBtn.onmousedown = (e) => e.preventDefault();
-      el.insertTableBtn.onclick = () => insertHtmlIntoActiveEditor(
-        '<table><thead><tr><th>項目1</th><th>項目2</th><th>項目3</th></tr></thead><tbody><tr><td>内容</td><td>内容</td><td>内容</td></tr><tr><td>内容</td><td>内容</td><td>内容</td></tr></tbody></table><p></p>'
-      );
-
-      el.insertCodeBlockBtn.onmousedown = (e) => e.preventDefault();
-      el.insertCodeBlockBtn.onclick = () => insertHtmlIntoActiveEditor(
-        '<pre><code>// ここにコードを入力</code></pre><p></p>'
-      );
-
-      el.insertLinkCardBtn.onmousedown = (e) => { e.preventDefault(); saveEditorSelection(); };
-      el.insertLinkCardBtn.onclick = async () => {
-        const res = await showLinkCardModal();
-        if (res) insertHtmlIntoActiveEditor(buildLinkOperationCardHtml(res));
-      };
-
-      el.insertNoteLinkBtn.onmousedown = (e) => { e.preventDefault(); saveEditorSelection(); };
-      el.insertNoteLinkBtn.onclick = async () => {
-        const target = await showNoteLinkPickerModal();
-        if (target) insertHtmlIntoActiveEditor(buildNoteLinkHtml(target));
-      };
-
-      el.embedMediaBtn.onmousedown = (e) => { e.preventDefault(); saveEditorSelection(); };
-      el.embedMediaBtn.onclick = () => el.embedMediaInput.click();
-      el.embedMediaInput.onchange = (e) => { handleDroppedOrSelectedFiles(e.target.files, true); e.target.value = ''; };
 
       el.noteRichEditor.oninput = () => {
         handleEditorContentChange(false);
-        updateWikiLinkPopup();
+        detectWikiLinkTrigger();
       };
-      el.noteRichEditor.onkeyup = (e) => {
-        if (['ArrowLeft', 'ArrowRight', 'Home', 'End', 'Backspace', 'Delete'].includes(e.key)) {
-          updateWikiLinkPopup();
-        }
-      };
+
       el.noteRichEditor.onkeydown = (e) => {
         if (state.wikiLinkState && !el.noteLinkPopup.classList.contains('hidden')) {
-          const total = state.wikiLinkState.candidates.length;
+          const { matches, selectedIndex } = state.wikiLinkState;
           if (e.key === 'ArrowDown') {
             e.preventDefault();
-            state.wikiLinkState.selectedIndex = (state.wikiLinkState.selectedIndex + 1) % total;
-            updateWikiLinkPopup();
+            state.wikiLinkState.selectedIndex = (selectedIndex + 1) % matches.length;
+            el.noteLinkPopup.querySelectorAll('.wiki-link-item').forEach((item, idx) => item.classList.toggle('active', idx === state.wikiLinkState.selectedIndex));
             return;
           }
           if (e.key === 'ArrowUp') {
             e.preventDefault();
-            state.wikiLinkState.selectedIndex = (state.wikiLinkState.selectedIndex - 1 + total) % total;
-            updateWikiLinkPopup();
+            state.wikiLinkState.selectedIndex = (selectedIndex - 1 + matches.length) % matches.length;
+            el.noteLinkPopup.querySelectorAll('.wiki-link-item').forEach((item, idx) => item.classList.toggle('active', idx === state.wikiLinkState.selectedIndex));
             return;
           }
           if (e.key === 'Enter' || e.key === 'Tab') {
             e.preventDefault();
-            applyWikiLinkCandidate(state.wikiLinkState.selectedIndex);
+            applyWikiLinkSelection(matches[selectedIndex]);
             return;
           }
           if (e.key === 'Escape') {
             e.preventDefault();
-            hideWikiLinkPopup();
+            closeWikiLinkPopup();
             return;
           }
         }
       };
 
-      el.noteLinkPopup.onmousedown = (e) => e.preventDefault();
-      el.noteLinkPopup.onclick = (e) => {
-        const btn = e.target.closest('[data-wiki-idx]');
-        if (btn) applyWikiLinkCandidate(Number(btn.dataset.wikiIdx));
-      };
-
-      el.noteRichEditor.onpaste = (e) => {
-        const files = Array.from(e.clipboardData?.items || []).filter(i => i.kind === 'file').map(i => i.getAsFile()).filter(Boolean);
-        if (files.length) { e.preventDefault(); handleDroppedOrSelectedFiles(files, true); }
+      el.noteRichEditor.onpaste = async (e) => {
+        const items = e.clipboardData?.items;
+        if (!items) return;
+        const files = Array.from(items).filter(i => i.kind === 'file').map(i => i.getAsFile()).filter(Boolean);
+        if (files.length) {
+          e.preventDefault();
+          await handleDroppedOrSelectedFiles(files, true);
+          return;
+        }
+        setTimeout(() => applyDarkModeReadabilityFix(el.noteRichEditor), 0);
       };
 
       el.noteRichEditor.onclick = async (e) => {
@@ -5006,171 +5039,260 @@ ${contentHtml || '<p></p>'}
           return;
         }
 
-        const editCardBtn = e.target.closest('.loosenote-edit-link-card-btn');
-        if (editCardBtn) {
+        const downloadLink = e.target.closest('a[download]');
+        if (downloadLink) {
           e.preventDefault();
           e.stopPropagation();
-          const card = editCardBtn.closest('.loosenote-link-card');
-          if (!card) return;
-          const res = await showLinkCardModal({
-            modalTitle: 'リンク運用カードを編集',
-            confirmLabel: '変更を保存',
-            initialFilename: card.dataset.filename || '',
-            initialUrl: card.dataset.url || '',
-            initialMemo: card.dataset.memo || ''
-          });
-          if (res) {
-            const temp = document.createElement('div');
-            temp.innerHTML = buildLinkOperationCardHtml({ filename: res.filename, fileSizeText: card.dataset.filesize || '', url: res.url, memo: res.memo });
-            const newCard = temp.querySelector('.loosenote-link-card');
-            if (newCard) {
-              card.replaceWith(newCard);
-              handleEditorContentChange(true);
-              showToast('リンク運用カードを更新しました', 'success');
+          const href = downloadLink.getAttribute('href') || '';
+          const filename = downloadLink.getAttribute('download') || 'attachment.pdf';
+          if (!href) return;
+          try {
+            let blobUrl = href;
+            let shouldRevoke = false;
+            if (href.startsWith('data:')) {
+              const blob = await dataUrlToBlob(href);
+              blobUrl = URL.createObjectURL(blob);
+              shouldRevoke = true;
             }
+            const tempA = document.createElement('a');
+            tempA.href = blobUrl;
+            tempA.download = filename;
+            tempA.style.display = 'none';
+            document.body.appendChild(tempA);
+            tempA.click();
+            tempA.remove();
+            if (shouldRevoke) {
+              setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
+            }
+            showToast(`「${filename}」のダウンロードを開始しました`, 'success');
+          } catch (err) {
+            console.error('添付ファイルダウンロードエラー:', err);
+            showToast(`ダウンロードに失敗しました: ${err.message}`, 'error');
           }
           return;
         }
 
+        const editBtn = e.target.closest('.loosenote-edit-link-card-btn');
+        if (editBtn) {
+          e.preventDefault(); e.stopPropagation();
+          const card = editBtn.closest('.loosenote-link-card');
+          if (!card) return;
+          const res = await showLinkCardModal({
+            modalTitle: 'リンク運用カードの編集', confirmLabel: '更新する',
+            initialFilename: card.dataset.filename || '', initialUrl: card.dataset.url || '', initialMemo: card.dataset.memo || ''
+          });
+          if (res) {
+            const tmp = document.createElement('div');
+            tmp.innerHTML = buildLinkOperationCardHtml({ filename: res.filename, fileSizeText: card.dataset.filesize || '', url: res.url, memo: res.memo });
+            const newCard = tmp.querySelector('.loosenote-link-card');
+            if (newCard) { card.replaceWith(newCard); handleEditorContentChange(true); showToast('リンク運用カードを更新しました', 'success'); }
+          }
+          return;
+        }
         if (e.target.tagName === 'IMG') {
-          showImageToolbar(e.target);
-        } else {
-          hideImageToolbar();
+          if (state.activeEditorImg) state.activeEditorImg.classList.remove('selected-editor-img');
+          state.activeEditorImg = e.target;
+          e.target.classList.add('selected-editor-img');
+          positionImageToolbar(e.target);
+        } else hideImageToolbar();
+      };
+
+      el.noteRichEditor.onchange = (e) => {
+        if (e.target.type === 'checkbox') {
+          e.target.checked ? e.target.setAttribute('checked', 'checked') : e.target.removeAttribute('checked');
+          handleEditorContentChange(true);
         }
       };
 
-      el.noteRichEditor.ondblclick = (e) => {
-        if (e.target.tagName === 'IMG') { e.preventDefault(); openLightbox(e.target.src); }
+      document.querySelectorAll('.toolbar-btn').forEach(btn => btn.onclick = () => {
+        el.noteRichEditor.focus();
+        document.execCommand(btn.dataset.cmd, false, btn.dataset.val || null);
+        handleEditorContentChange(true);
+      });
+      el.insertCheckboxBtn.onclick = () => {
+        el.noteRichEditor.focus();
+        document.execCommand('insertHTML', false, `<div><input type="checkbox" style="margin-right:6px;"> <span>タスク項目</span></div>`);
+        handleEditorContentChange(true);
+      };
+      el.insertTableBtn.onclick = () => {
+        el.noteRichEditor.focus();
+        document.execCommand('insertHTML', false, `<table><thead><tr><th>項目</th><th>内容</th><th>備考</th></tr></thead><tbody><tr><td><br></td><td><br></td><td><br></td></tr><tr><td><br></td><td><br></td><td><br></td></tr></tbody></table><p></p>`);
+        handleEditorContentChange(true);
+      };
+      el.insertCodeBlockBtn.onclick = () => {
+        el.noteRichEditor.focus();
+        document.execCommand('insertHTML', false, `<pre><code>// ここにコードやログを記述</code></pre><p></p>`);
+        handleEditorContentChange(true);
       };
 
-      document.querySelectorAll('[data-img-size]').forEach(btn => {
-        btn.onclick = () => {
-          if (!state.activeEditorImg) return;
-          const w = btn.dataset.imgSize;
-          state.activeEditorImg.style.width = w;
-          state.activeEditorImg.style.maxWidth = w === '100%' ? '100%' : w;
-          state.activeEditorImg.style.height = 'auto';
-          handleEditorContentChange(true);
-          showImageToolbar(state.activeEditorImg);
-        };
-      });
+      el.addTagInput.onkeydown = async (e) => {
+        if (e.key !== 'Enter') return;
+        e.preventDefault();
+        const tag = el.addTagInput.value.trim().replace(/^#+/, '');
+        const note = state.notes.find(n => n.id === state.activeNoteId);
+        if (tag && note && !note.tags.includes(tag)) {
+          note.tags.push(tag);
+          note.updatedAt = new Date().toISOString();
+          note.needsSync = true;
+          note.metaHtmlDirty = true;
+          note._searchKey = buildSearchKey(note);
+          await executeSaveForNote(note.id);
+          renderNotesList();
+          renderEditor();
+        }
+        el.addTagInput.value = '';
+      };
 
-      el.imgLightboxOpenBtn.onclick = () => state.activeEditorImg && openLightbox(state.activeEditorImg.src);
-      el.imgLightboxCloseBtn.onclick = closeLightbox;
-      el.imageLightboxModal.onclick = (e) => { if (e.target === el.imageLightboxModal) closeLightbox(); };
+      el.activeNoteTags.onclick = async (e) => {
+        const rm = e.target.closest('[data-remove-tag]');
+        const note = state.notes.find(n => n.id === state.activeNoteId);
+        if (rm && note) {
+          note.tags = note.tags.filter(t => t !== rm.dataset.removeTag);
+          note.updatedAt = new Date().toISOString();
+          note.needsSync = true;
+          note.metaHtmlDirty = true;
+          note._searchKey = buildSearchKey(note);
+          await executeSaveForNote(note.id);
+          renderNotesList();
+          renderEditor();
+        }
+      };
+
+      el.pinNoteBtn.onclick = async () => {
+        const note = state.notes.find(n => n.id === state.activeNoteId);
+        if (!note) return;
+        note.pinned = !note.pinned;
+        note.updatedAt = new Date().toISOString();
+        note.needsSync = true;
+        note.metaHtmlDirty = true;
+        await executeSaveForNote(note.id);
+        renderAll();
+      };
+      el.downloadSingleHtmlBtn.onclick = downloadSingleNoteAsHTML;
+      el.deleteNoteBtn.onclick = () => state.activeNoteId && moveNoteToTrash(state.activeNoteId);
+      el.restoreTrashedNoteBtn.onclick = () => state.activeNoteId && restoreNoteFromTrash(state.activeNoteId);
+      el.permanentDeleteNoteBtn.onclick = () => state.activeNoteId && permanentlyDeleteNote(state.activeNoteId);
+      el.emptyTrashBtn.onclick = emptyTrash;
+
+      el.imageFloatingToolbar.onclick = (e) => {
+        const szBtn = e.target.closest('[data-img-size]');
+        if (szBtn && state.activeEditorImg) {
+          state.activeEditorImg.style.width = szBtn.dataset.imgSize;
+          state.activeEditorImg.style.height = 'auto';
+          positionImageToolbar(state.activeEditorImg);
+          handleEditorContentChange(true);
+        }
+      };
+      el.imgLightboxOpenBtn.onclick = () => {
+        if (!state.activeEditorImg) return;
+        el.imgLightboxPreview.src = state.activeEditorImg.src;
+        el.imageLightboxModal.classList.remove('hidden');
+      };
+      el.imgLightboxCloseBtn.onclick = () => el.imageLightboxModal.classList.add('hidden');
+      el.imageLightboxModal.onclick = (e) => { if (e.target === el.imageLightboxModal) el.imageLightboxModal.classList.add('hidden'); };
 
       document.addEventListener('click', (e) => {
-        if (!e.target.closest('#image-floating-toolbar') && e.target.tagName !== 'IMG') hideImageToolbar();
-        if (!e.target.closest('#note-link-popup') && !e.target.closest('#note-rich-editor')) hideWikiLinkPopup();
+        if (state.wikiLinkState && !el.noteLinkPopup.contains(e.target) && !el.noteRichEditor.contains(e.target)) {
+          closeWikiLinkPopup();
+        }
       });
 
       document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape' && !el.imageLightboxModal.classList.contains('hidden')) closeLightbox();
         if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
           e.preventDefault();
-          if (el.customModal.classList.contains('hidden')) showQuickJumpModal();
+          showQuickJumpModal();
+          return;
         }
-        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
-          e.preventDefault();
-          if (state.activeNoteId) {
-            flushPendingAutoSave().then(() => showToast('ノートを保存しました', 'success'));
-          }
+        if (e.key === 'Escape' && !el.imageLightboxModal.classList.contains('hidden')) {
+          el.imageLightboxModal.classList.add('hidden');
         }
       });
 
       let dragCounter = 0;
       window.addEventListener('dragenter', (e) => {
-        if (e.dataTransfer?.types?.includes('Files')) { dragCounter++; el.globalDropOverlay.classList.remove('hidden'); }
+        if (!e.dataTransfer?.types?.includes('Files')) return;
+        e.preventDefault();
+        if (++dragCounter === 1) el.globalDropOverlay.classList.remove('hidden');
       });
-      window.addEventListener('dragover', (e) => { if (e.dataTransfer?.types?.includes('Files')) e.preventDefault(); });
-      window.addEventListener('dragleave', () => { if (--dragCounter <= 0) { dragCounter = 0; el.globalDropOverlay.classList.add('hidden'); } });
-      window.addEventListener('drop', (e) => {
-        if (e.dataTransfer?.files?.length) {
-          e.preventDefault(); dragCounter = 0; el.globalDropOverlay.classList.add('hidden');
-          handleDroppedOrSelectedFiles(e.dataTransfer.files, Boolean(state.activeNoteId && el.editorPane.contains(e.target)));
-        }
+      window.addEventListener('dragover', (e) => e.dataTransfer?.types?.includes('Files') && e.preventDefault());
+      window.addEventListener('dragleave', (e) => {
+        if (!e.dataTransfer?.types?.includes('Files')) return;
+        if (--dragCounter <= 0) { dragCounter = 0; el.globalDropOverlay.classList.add('hidden'); }
+      });
+      window.addEventListener('drop', async (e) => {
+        if (!e.dataTransfer?.files?.length) return;
+        e.preventDefault();
+        dragCounter = 0;
+        el.globalDropOverlay.classList.add('hidden');
+        await handleDroppedOrSelectedFiles(e.dataTransfer.files, false);
       });
 
-      window.addEventListener('beforeunload', (e) => {
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'hidden') {
+          flushPendingAutoSave();
+        }
+      });
+      window.addEventListener('beforeunload', () => {
         if (state.saveTimeout && state.pendingSaveNoteId) {
           const note = state.notes.find(n => n.id === state.pendingSaveNoteId);
           if (note) {
-            const content = state.activeNoteContentId === note.id ? state.activeNoteContent : '<p></p>';
-            const fullPlainText = stripHtmlToText(content);
-            note.plainText = fullPlainText.slice(0, SEARCH_INDEX_MAX_CHARS);
-            note.snippet = fullPlainText.slice(0, 120);
-            note.size = estimateNoteBytes(note, content);
-            note.needsSync = true;
-            note._searchKey = buildSearchKey(note);
-            saveNoteMetaAndContentToDB(note, content);
+            saveNoteMetaAndContentToDB(note, state.activeNoteContentId === note.id ? state.activeNoteContent : '<p></p>');
           }
-          e.preventDefault();
-          e.returnValue = '';
         }
       });
     }
 
-    function setupAppleTouchIcon() {
-      const svgEl = document.getElementById('brand-elephant-svg');
-      if (!svgEl || !el.appTouchIcon) return;
-      const svgData = new XMLSerializer().serializeToString(svgEl);
-      const img = new Image();
-      img.onload = () => {
-        const canvas = document.createElement('canvas');
-        canvas.width = 180; canvas.height = 180;
-        canvas.getContext('2d').drawImage(img, 0, 0, 180, 180);
-        el.appTouchIcon.href = canvas.toDataURL('image/png');
-      };
-      img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgData);
-    }
-
-    /* ==========================================================================
-       13. アプリケーション起動シーケンス
-       ========================================================================== */
-    (async function initApp() {
-      setupAppleTouchIcon();
+    async function initApp() {
+      setupAppIcons();
+      const savedTheme = localStorage.getItem('loosenote-theme');
+      const systemDarkQuery = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
+      applyTheme(savedTheme ? savedTheme === 'dark' : Boolean(systemDarkQuery?.matches), false);
+      if (systemDarkQuery?.addEventListener) {
+        systemDarkQuery.addEventListener('change', (e) => {
+          if (!localStorage.getItem('loosenote-theme')) {
+            applyTheme(e.matches, false);
+          }
+        });
+      }
+      el.sortSelect.value = state.sortBy;
+      bindAllEvents();
       await requestPersistentStorageProtection();
 
-      const savedTheme = localStorage.getItem('loosenote-theme');
-      applyTheme(savedTheme === 'dark' || (!savedTheme && window.matchMedia('(prefers-color-scheme: dark)').matches));
-
-      el.sortSelect.value = state.sortBy;
-      el.iconViewCompact.classList.toggle('hidden', state.isCompactList);
-      el.iconViewCard.classList.toggle('hidden', !state.isCompactList);
-
-      const loaded = await loadStateFromDB();
-      state.notes = loaded.notes;
-      state.notebooks = loaded.notebooks;
-      syncNotebooksFromNotes();
-
-      if (!loaded.initialized && !state.notes.length) {
-        const welcomeContent = `<p><strong>LooseNote Cloud</strong> は、1ノート＝1ファイルの純粋な HTML として <strong>Googleドライブと直接双方向同期</strong> できる長期安定運用向けノートアプリです。</p>
-<ul>
-  <li><strong>スマートLRUキャッシュ方式に統一：</strong>軽量メタデータと120pxサムネイルは全件常駐しつつ、重い本文キャッシュは PC では直近100件・スマホでは直近30件を自動保持します。</li>
-  <li><strong>Google Drive Changes API 差分同期：</strong>2回目以降は前回以降に変更・削除されたファイルだけを4並列で高速同期し、オフライン同時編集時は「競合コピー」を自動退避します。</li>
-  <li><strong>大容量データの安全設計：</strong>10MB超のファイルはHTML直埋め込みを遮断し、Googleドライブの別フォルダ保管＆リンク運用カードへ自動誘導します。</li>
-</ul>`;
-        const welcome = await buildNewSeparatedNoteObject({
-          title: 'LooseNote Cloud（長期安定運用版）へようこそ',
+      const saved = await loadStateFromDB();
+      if (saved.notes.length > 0 || saved.initialized) {
+        state.notes = saved.notes;
+        state.notebooks = saved.notebooks;
+        syncNotebooksFromNotes();
+      } else {
+        const welcomeContent = `<p>LooseNote（Google Drive 直接連携版）へようこそ！</p>
+           <p>このアプリは、<strong>PC・スマホのブラウザから直接あなたのGoogleドライブへアクセス</strong>し、<strong>「1ノート＝1個の自己完結型HTMLファイル」</strong>として保存・双方向差分同期を行います。</p>
+           <h2>✨ 主なポイント</h2>
+           <ul>
+             <li><strong>軽量＆高速インデックス設計：</strong>ノートの検索用メタデータと本文を分離し、端末容量に合わせて直近の本文だけをスマートLRU自動キャッシュするため、何千件のノートでも軽快に動作します。</li>
+             <li><strong>差分同期＆自動画像最適化：</strong>Google Drive の変更履歴（Changes API）を使った高速差分同期と、貼り付け画像の自動WebP軽量化に対応しています。</li>
+             <li><strong>[[ でノート間リンク：</strong>本文で <code>[[</code> と入力すると、他のノートへすぐリンクを張れます。<code>Ctrl+K</code>（Macは <code>⌘K</code>）でクイックジャンプも使えます。</li>
+           </ul>`;
+        const built = await buildNewSeparatedNoteObject({
+          title: 'LooseNote へようこそ！（Google Drive 直接連携ガイド）',
           content: welcomeContent,
-          tags: ['ガイド', 'Googleドライブ連携'],
+          tags: ['ガイド', 'クラウド同期'],
           stack: 'はじめに',
           notebook: '使い方メモ'
         });
-        state.notes.push(welcome.meta);
+        state.notes = [built.meta];
         syncNotebooksFromNotes();
-        await saveNoteMetaAndContentToDB(welcome.meta, welcome.content);
+        await saveNoteMetaAndContentToDB(built.meta, built.content);
       }
 
-      const initialNote = getFilteredAndSortedNotes()[0] || null;
-      state.activeNoteId = initialNote?.id || null;
-      setupEventListeners();
+      const initialNotes = getFilteredAndSortedNotes();
+      state.activeNoteId = initialNotes[0]?.id || null;
+      if (state.activeNoteId) {
+        await ensureActiveNoteContentLoaded(state.activeNoteId);
+      }
       renderAll();
+    }
 
-      if (initialNote) {
-        await ensureActiveNoteContentLoaded(initialNote.id);
-      }
-    })();
+    initApp();
   </script>
 </body>
 </html>
