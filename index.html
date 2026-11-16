@@ -993,6 +993,7 @@
       gdriveRateLimitCooldownUntil: 0,
       isGdriveSyncing: false,
       abortSyncRequested: false,
+      isEnexImporting: false,
       lastSyncError: ''
     };
 
@@ -3315,7 +3316,7 @@ ${contentHtml || '<p></p>'}
     }
 
     /* ==========================================================================
-       6. Evernote (.enex) パーサー & MD5ハッシュ照合
+       6. Evernote (.enex) ストリーミング逐次パーサー & MD5ハッシュ照合
        ========================================================================== */
     function md5Bytes(bytes) {
       const rotl = (x, c) => (x << c) | (x >>> (32 - c));
@@ -3364,11 +3365,15 @@ ${contentHtml || '<p></p>'}
       return { bytes, cleanedBase64: cleaned };
     }
 
-    async function parseEnexXML(xmlText, defaultNotebookName = '') {
-      const xmlDoc = new DOMParser().parseFromString(xmlText, 'text/xml');
+    async function parseSingleEnexNoteXml(noteXmlStr, defaultNotebookName = '') {
+      let xmlDoc = new DOMParser().parseFromString(`<?xml version="1.0" encoding="UTF-8"?>${noteXmlStr}`, 'text/xml');
       if (xmlDoc.querySelector('parsererror')) {
-        throw new Error('XMLの構文が破損しているため .enex ファイルを解析できませんでした');
+        const cleanedXml = noteXmlStr.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '');
+        xmlDoc = new DOMParser().parseFromString(`<?xml version="1.0" encoding="UTF-8"?>${cleanedXml}`, 'text/xml');
       }
+      const noteEl = xmlDoc.querySelector('note');
+      if (!noteEl) return null;
+
       const parseTs = (ts) => {
         if (!ts) return new Date().toISOString();
         const m = ts.trim().match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z?$/);
@@ -3377,105 +3382,218 @@ ${contentHtml || '<p></p>'}
         return isNaN(d.getTime()) ? new Date().toISOString() : d.toISOString();
       };
 
-      const noteNodes = Array.from(xmlDoc.querySelectorAll('note'));
-      const results = [];
+      const title = noteEl.querySelector('title')?.textContent?.trim() || '無題のEvernoteノート';
+      const createdAt = parseTs(noteEl.querySelector('created')?.textContent);
+      const updatedAt = noteEl.querySelector('updated')?.textContent ? parseTs(noteEl.querySelector('updated').textContent) : createdAt;
+      const tags = Array.from(noteEl.querySelectorAll('tag')).map(t => t.textContent?.trim()).filter(Boolean);
 
-      for (let i = 0; i < noteNodes.length; i++) {
-        const noteEl = noteNodes[i];
-        const title = noteEl.querySelector('title')?.textContent?.trim() || '無題のEvernoteノート';
-        const createdAt = parseTs(noteEl.querySelector('created')?.textContent);
-        const updatedAt = noteEl.querySelector('updated')?.textContent ? parseTs(noteEl.querySelector('updated').textContent) : createdAt;
-        const tags = Array.from(noteEl.querySelectorAll('tag')).map(t => t.textContent?.trim()).filter(Boolean);
+      const resourceMap = new Map();
+      const oversizedResources = [];
+      const resNodes = Array.from(noteEl.querySelectorAll('resource'));
 
-        const resourceMap = new Map();
-        noteEl.querySelectorAll('resource').forEach(resEl => {
-          const dataText = resEl.querySelector('data')?.textContent;
-          if (!dataText) return;
-          try {
-            const { bytes, cleanedBase64 } = base64ToUint8Array(dataText);
-            const mime = resEl.querySelector('mime')?.textContent?.trim() || 'application/octet-stream';
-            const filename = (resEl.querySelector('resource-attributes > file-name')?.textContent || resEl.querySelector('file-name')?.textContent || '').trim();
-            resourceMap.set(md5Bytes(bytes), { mime, base64: cleanedBase64, filename });
-          } catch {}
-        });
+      for (const resEl of resNodes) {
+        const dataEl = resEl.querySelector('data');
+        const dataText = dataEl?.textContent;
+        if (!dataText) continue;
 
-        const rawEnml = (noteEl.querySelector('content')?.textContent || '')
-          .replace(/<\?xml[\s\S]*?\?>/gi, '').replace(/<!DOCTYPE[\s\S]*?>/gi, '')
-          .replace(/<en-(media|todo)([^>]*?)\/>/gi, '<en-$1$2></en-$1>');
-        const doc = new DOMParser().parseFromString(rawEnml, 'text/html');
-        const enNote = doc.querySelector('en-note') || doc.body;
-        const usedHashes = new Set();
+        const mime = resEl.querySelector('mime')?.textContent?.trim() || 'application/octet-stream';
+        const filename = (resEl.querySelector('resource-attributes > file-name')?.textContent || resEl.querySelector('file-name')?.textContent || '').trim();
+        const estimatedBytes = Math.floor((dataText.length * 3) / 4);
 
-        enNote.querySelectorAll('en-todo').forEach(todo => {
-          const cb = doc.createElement('input');
-          cb.type = 'checkbox';
-          if (todo.getAttribute('checked') === 'true') cb.setAttribute('checked', 'checked');
-          cb.style.marginRight = '6px';
-          todo.replaceWith(cb);
-        });
-
-        const buildMediaNode = (res, hash) => {
-          const dataUrl = `data:${res.mime};base64,${res.base64}`;
-          const fname = res.filename || `attachment_${hash.slice(0, 6)}`;
-          if (res.mime.startsWith('image/')) return `<img src="${dataUrl}" alt="${escapeHtml(fname)}">`;
-          if (res.mime === 'application/pdf') {
-            return `<div style="margin:12px 0;"><div style="padding:10px 14px;border:1px solid #d6d3d1;border-radius:10px;background:#f5f5f4;color:#1c1917;margin-bottom:6px;font-size:13px;">📄 <strong>${escapeHtml(fname)}</strong> <a href="${dataUrl}" download="${escapeHtml(fname)}" contenteditable="false" style="margin-left:10px;color:#16a34a;">ダウンロード</a></div><embed src="${dataUrl}" type="application/pdf" width="100%" height="480px" style="border-radius:8px;border:1px solid #e7e5e4;"></div>`;
-          }
-          return `<p>📎 <a href="${dataUrl}" download="${escapeHtml(fname)}" contenteditable="false">${escapeHtml(fname)} (${escapeHtml(res.mime)})</a></p>`;
-        };
-
-        enNote.querySelectorAll('en-media').forEach(media => {
-          const hash = (media.getAttribute('hash') || '').toLowerCase();
-          const res = resourceMap.get(hash);
-          if (res) {
-            usedHashes.add(hash);
-            const wrap = doc.createElement('div');
-            wrap.innerHTML = buildMediaNode(res, hash);
-            media.replaceWith(...wrap.childNodes);
-          } else {
-            media.remove();
-          }
-        });
-
-        const extra = [];
-        for (const [hash, res] of resourceMap.entries()) {
-          if (!usedHashes.has(hash)) extra.push(buildMediaNode(res, hash));
+        if (estimatedBytes > LARGE_FILE_THRESHOLD) {
+          oversizedResources.push({
+            filename: filename || '大容量添付ファイル',
+            fileSizeText: formatBytes(estimatedBytes)
+          });
+          if (dataEl) dataEl.textContent = '';
+          continue;
         }
 
-        const htmlContent = sanitizeHtmlContent((enNote.innerHTML || '').trim() + (extra.length ? '\n' + extra.join('\n') : ''));
-        const fullPlainText = stripHtmlToText(htmlContent);
-        const thumbDataUrl = await generateThumbnailFromHtml(htmlContent);
-        const id = generateId();
-
-        const metaObj = {
-          id,
-          title,
-          plainText: fullPlainText.slice(0, SEARCH_INDEX_MAX_CHARS),
-          snippet: fullPlainText.slice(0, 120),
-          tags,
-          pinned: false,
-          trashed: false,
-          stack: '',
-          notebook: defaultNotebookName,
-          createdAt,
-          updatedAt,
-          filename: ensureHtmlFilename(title, id, ''),
-          gdriveFileId: '',
-          gdriveModifiedTime: '',
-          needsSync: true,
-          metaHtmlDirty: false,
-          contentCached: true,
-          hasMedia: detectHasMedia(htmlContent),
-          thumbDataUrl,
-          size: 0
-        };
-        metaObj._searchKey = buildSearchKey(metaObj);
-        metaObj.size = new Blob([serializeNoteToHTML(metaObj, htmlContent)]).size;
-        results.push({ meta: metaObj, content: htmlContent });
-
-        if (i % 10 === 9) await new Promise(r => setTimeout(r, 0));
+        try {
+          const { bytes, cleanedBase64 } = base64ToUint8Array(dataText);
+          const hash = md5Bytes(bytes);
+          let finalDataUrl = `data:${mime};base64,${cleanedBase64}`;
+          if (mime.startsWith('image/') && estimatedBytes > 250 * 1024) {
+            finalDataUrl = await optimizeDataUrlImage(finalDataUrl, mime);
+          }
+          resourceMap.set(hash, { mime, dataUrl: finalDataUrl, filename });
+        } catch {}
+        if (dataEl) dataEl.textContent = '';
       }
-      return results;
+
+      const rawEnml = (noteEl.querySelector('content')?.textContent || '')
+        .replace(/<\?xml[\s\S]*?\?>/gi, '').replace(/<!DOCTYPE[\s\S]*?>/gi, '')
+        .replace(/<en-(media|todo)([^>]*?)\/>/gi, '<en-$1$2></en-$1>');
+      const doc = new DOMParser().parseFromString(rawEnml, 'text/html');
+      const enNote = doc.querySelector('en-note') || doc.body;
+      const usedHashes = new Set();
+
+      enNote.querySelectorAll('en-todo').forEach(todo => {
+        const cb = doc.createElement('input');
+        cb.type = 'checkbox';
+        if (todo.getAttribute('checked') === 'true') cb.setAttribute('checked', 'checked');
+        cb.style.marginRight = '6px';
+        todo.replaceWith(cb);
+      });
+
+      const buildMediaNode = (res, hash) => {
+        const fname = res.filename || `attachment_${hash.slice(0, 6)}`;
+        if (res.mime.startsWith('image/')) return `<img src="${res.dataUrl}" alt="${escapeHtml(fname)}">`;
+        if (res.mime === 'application/pdf') {
+          return `<div style="margin:12px 0;"><div style="padding:10px 14px;border:1px solid #d6d3d1;border-radius:10px;background:#f5f5f4;color:#1c1917;margin-bottom:6px;font-size:13px;">📄 <strong>${escapeHtml(fname)}</strong> <a href="${res.dataUrl}" download="${escapeHtml(fname)}" contenteditable="false" style="margin-left:10px;color:#16a34a;">ダウンロード</a></div><embed src="${res.dataUrl}" type="application/pdf" width="100%" height="480px" style="border-radius:8px;border:1px solid #e7e5e4;"></div>`;
+        }
+        return `<p>📎 <a href="${res.dataUrl}" download="${escapeHtml(fname)}" contenteditable="false">${escapeHtml(fname)} (${escapeHtml(res.mime)})</a></p>`;
+      };
+
+      enNote.querySelectorAll('en-media').forEach(media => {
+        const hash = (media.getAttribute('hash') || '').toLowerCase();
+        const res = resourceMap.get(hash);
+        if (res) {
+          usedHashes.add(hash);
+          const wrap = doc.createElement('div');
+          wrap.innerHTML = buildMediaNode(res, hash);
+          media.replaceWith(...wrap.childNodes);
+        } else {
+          media.remove();
+        }
+      });
+
+      const extra = [];
+      for (const [hash, res] of resourceMap.entries()) {
+        if (!usedHashes.has(hash)) extra.push(buildMediaNode(res, hash));
+      }
+      for (const ov of oversizedResources) {
+        extra.push(buildLinkOperationCardHtml({
+          filename: ov.filename,
+          fileSizeText: ov.fileSizeText,
+          memo: '※Evernoteインポート時に10MB超のためメモリ保護により自動分離されました。必要に応じてGoogleドライブ等へ保管してURLを登録してください。'
+        }));
+      }
+
+      const htmlContent = sanitizeHtmlContent((enNote.innerHTML || '').trim() + (extra.length ? '\n' + extra.join('\n') : ''));
+      const fullPlainText = stripHtmlToText(htmlContent);
+      const thumbDataUrl = await generateThumbnailFromHtml(htmlContent);
+      const id = generateId();
+
+      const metaObj = {
+        id,
+        title,
+        plainText: fullPlainText.slice(0, SEARCH_INDEX_MAX_CHARS),
+        snippet: fullPlainText.slice(0, 120),
+        tags,
+        pinned: false,
+        trashed: false,
+        stack: '',
+        notebook: defaultNotebookName,
+        createdAt,
+        updatedAt,
+        filename: ensureHtmlFilename(title, id, ''),
+        gdriveFileId: '',
+        gdriveModifiedTime: '',
+        needsSync: true,
+        metaHtmlDirty: false,
+        contentCached: true,
+        hasMedia: detectHasMedia(htmlContent),
+        thumbDataUrl,
+        size: new Blob([serializeNoteToHTML(
+          { id, title, tags, stack: '', notebook: defaultNotebookName, createdAt, updatedAt },
+          htmlContent
+        )]).size
+      };
+      metaObj._searchKey = buildSearchKey(metaObj);
+      return { meta: metaObj, content: htmlContent };
+    }
+
+    async function importEnexStream(file, defaultNotebookName = '') {
+      if (!file.stream) {
+        throw new Error('お使いのブラウザはストリーミング読み込みに対応していません');
+      }
+
+      state.isEnexImporting = true;
+      state.abortSyncRequested = false;
+      const totalBytes = Math.max(1, file.size || 1);
+      let bytesRead = 0;
+      let importedCount = 0;
+      let firstCreatedId = null;
+      let firstCreatedContent = '<p></p>';
+
+      setSyncProgressUI(true, `.enex 読込開始: 0件 (0%)`, 1);
+
+      const reader = file.stream().getReader();
+      const decoder = new TextDecoder('utf-8');
+      let buffer = '';
+
+      try {
+        while (true) {
+          if (state.abortSyncRequested) {
+            try { await reader.cancel(); } catch {}
+            break;
+          }
+
+          const { value, done } = await reader.read();
+          if (value) {
+            bytesRead += value.byteLength;
+            buffer += decoder.decode(value, { stream: !done });
+          } else if (done) {
+            buffer += decoder.decode(new Uint8Array(0), { stream: false });
+          }
+
+          while (true) {
+            if (state.abortSyncRequested) break;
+            const startMatch = buffer.match(/<note(?:\s[^>]*)?>/i);
+            if (!startMatch) {
+              const lastLt = buffer.lastIndexOf('<');
+              buffer = lastLt !== -1 ? buffer.slice(lastLt) : '';
+              break;
+            }
+            const startIdx = startMatch.index;
+            if (startIdx > 0) {
+              buffer = buffer.slice(startIdx);
+            }
+            const endIdx = buffer.indexOf('</note>');
+            if (endIdx === -1) {
+              break;
+            }
+
+            let noteXml = buffer.slice(0, endIdx + 7);
+            buffer = buffer.slice(endIdx + 7);
+
+            const parsed = await parseSingleEnexNoteXml(noteXml, defaultNotebookName);
+            noteXml = '';
+
+            if (parsed) {
+              state.notes.unshift(parsed.meta);
+              await saveNoteMetaAndContentToDB(parsed.meta, parsed.content);
+              if (!firstCreatedId) {
+                firstCreatedId = parsed.meta.id;
+                firstCreatedContent = parsed.content;
+              }
+              parsed.content = '';
+              importedCount++;
+
+              const pct = Math.min(99, Math.round((bytesRead / totalBytes) * 100));
+              setSyncProgressUI(true, `.enex 読込中: ${importedCount}件 (${pct}%)`, pct);
+
+              if (importedCount % 4 === 0) {
+                await new Promise(r => setTimeout(r, 0));
+              }
+            }
+          }
+
+          if (done) break;
+        }
+      } finally {
+        buffer = '';
+        state.isEnexImporting = false;
+        setSyncProgressUI(false);
+      }
+
+      return {
+        importedCount,
+        firstCreatedId,
+        firstCreatedContent,
+        aborted: state.abortSyncRequested
+      };
     }
 
     /* ==========================================================================
@@ -3627,10 +3745,9 @@ ${contentHtml || '<p></p>'}
       const r = new FileReader(); r.onload = () => res(r.result); r.onerror = () => rej(r.error); r.readAsDataURL(file);
     });
 
-    async function optimizeImageFileToDataUrl(file) {
-      const rawDataUrl = await readFileAsDataURL(file);
-      if (state.imageOptimizeMode !== 'auto') return rawDataUrl;
-      if (file.type === 'image/gif' || file.type === 'image/svg+xml') return rawDataUrl;
+    function optimizeDataUrlImage(rawDataUrl, mimeType = '') {
+      if (state.imageOptimizeMode !== 'auto') return Promise.resolve(rawDataUrl);
+      if (mimeType === 'image/gif' || mimeType === 'image/svg+xml') return Promise.resolve(rawDataUrl);
 
       return new Promise((resolve) => {
         const img = new Image();
@@ -3665,6 +3782,11 @@ ${contentHtml || '<p></p>'}
       });
     }
 
+    async function optimizeImageFileToDataUrl(file) {
+      const rawDataUrl = await readFileAsDataURL(file);
+      return await optimizeDataUrlImage(rawDataUrl, file.type);
+    }
+
     function getDefaultTargetLocation() {
       if (state.activeFilter.startsWith('notebook:')) {
         const nb = state.activeFilter.slice(9);
@@ -3697,24 +3819,27 @@ ${contentHtml || '<p></p>'}
 
         if (lower.endsWith('.enex')) {
           try {
-            showToast(`「${file.name}」を解析しています...`, 'info', 2500);
-            const enexPairs = await parseEnexXML(await file.text(), file.name.replace(/\.enex$/i, '').trim() || 'Evernoteインポート');
-            if (enexPairs.length) {
-              for (const pair of enexPairs) {
-                state.notes.unshift(pair.meta);
-                await saveNoteMetaAndContentToDB(pair.meta, pair.content);
-                await uploadNoteToGoogleDrive(pair.meta, pair.content);
-              }
+            showToast(`「${file.name}」を省メモリストリーミング解析しています...`, 'info', 3000);
+            const defaultNb = file.name.replace(/\.enex$/i, '').trim() || 'Evernoteインポート';
+            const streamRes = await importEnexStream(file, defaultNb);
+            if (streamRes.importedCount > 0) {
               syncNotebooksFromNotes();
-              lastCreatedId = enexPairs[0].meta.id;
-              lastCreatedContent = enexPairs[0].content;
-              createdCount += enexPairs.length;
+              lastCreatedId = streamRes.firstCreatedId;
+              lastCreatedContent = streamRes.firstCreatedContent;
+              createdCount += streamRes.importedCount;
               showedCustomToast = true;
-              showToast(`「${file.name}」から ${enexPairs.length} 件をインポートしました`, 'success');
-            } else {
+              if (streamRes.aborted) {
+                showToast(`インポートを中断しました（それまでの ${streamRes.importedCount} 件は保存済みです）`, 'warning', 5500);
+              } else {
+                showToast(`「${file.name}」から ${streamRes.importedCount} 件を省メモリインポートしました`, 'success');
+              }
+            } else if (!streamRes.aborted) {
               showToast(`「${file.name}」内に有効なノートが見つかりませんでした`, 'warning');
             }
-          } catch { showToast(`「${file.name}」の読み込みに失敗しました`, 'error'); }
+          } catch (enexErr) {
+            console.error('.enex 読み込みエラー:', enexErr);
+            showToast(`「${file.name}」の読み込みに失敗しました: ${enexErr?.message || ''}`, 'error', 6500);
+          }
           continue;
         }
 
@@ -3827,6 +3952,9 @@ ${contentHtml || '<p></p>'}
         toggleMobileEditor(true);
         if (!showedCustomToast) {
           showToast(createdCount === 1 ? 'ファイルから新しいノートを作成しました' : `${createdCount} 件のノートを取り込みました`, 'success');
+        }
+        if (isGdriveConnected()) {
+          syncWithGoogleDrive(false);
         }
       } else if (embeddedCount > 0) {
         renderAll();
@@ -4703,7 +4831,7 @@ ${contentHtml || '<p></p>'}
       el.syncGdriveNowBtn.onclick = () => syncWithGoogleDrive(true);
       el.abortSyncBtn.onclick = () => {
         state.abortSyncRequested = true;
-        showToast('現在のバッチ完了後に同期を中断します...', 'info', 2500);
+        showToast(state.isEnexImporting ? '現在のノート保存完了後にインポートを中断します...' : '現在のバッチ完了後に同期を中断します...', 'info', 2500);
       };
       el.gdriveSettingsBtn.onclick = async () => {
         const res = await showGdriveSettingsModal();
