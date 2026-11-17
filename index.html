@@ -439,7 +439,17 @@
       min-width: 0;
       position: relative;
     }
-    .editor-pane.mobile-open { display: flex; }
+    @media (max-width: 767px) {
+      .workspace.mobile-editor-open .list-pane {
+        display: none;
+      }
+      .editor-pane.mobile-open {
+        display: flex;
+        width: 100%;
+        height: 100%;
+        background: var(--bg-body);
+      }
+    }
     .editor-pane.editor-drop-active::after {
       content: "";
       position: absolute;
@@ -4945,113 +4955,119 @@ ${contentHtml || '<p></p>'}
     }
 
     function toggleMobileEditor(open, fromPopState = false) {
+      const workspaceEl = document.querySelector('.workspace');
+      if (workspaceEl) workspaceEl.classList.toggle('mobile-editor-open', open);
       el.editorPane.classList.toggle('mobile-open', open);
       if (window.innerWidth >= 768) return;
-
-      if (open && !state.mobileHistoryPushed) {
-        try {
-          history.pushState({ looseNoteMobileEditor: true }, '');
-          state.mobileHistoryPushed = true;
-        } catch {}
-      } else if (!open) {
-        if (state.mobileHistoryPushed) {
-          state.mobileHistoryPushed = false;
-          if (!fromPopState && history.state?.looseNoteMobileEditor) {
-            try { history.back(); } catch {}
-          }
+      if (open) {
+        if (!state.mobileHistoryPushed) {
+          try {
+            window.history.pushState({ loosenoteMobileEditor: true }, '');
+            state.mobileHistoryPushed = true;
+          } catch {}
         }
-        flushPendingAutoSave().finally(() => {
-          if (!el.editorPane.classList.contains('mobile-open')) {
-            releaseActiveEditorMemory();
-            renderNotesList(false);
-          }
-        });
+      } else {
+        if (state.mobileHistoryPushed && !fromPopState) {
+          state.mobileHistoryPushed = false;
+          try {
+            window.history.back();
+          } catch {}
+        } else {
+          state.mobileHistoryPushed = false;
+        }
       }
     }
 
-    /* ==========================================================================
-       11. ノート間リンク（[[ ポップアップ & クリックジャンプ）& クイックジャンプ
-       ========================================================================== */
-    async function navigateToLinkedNote(targetNoteId, pushHistory = true) {
-      const target = state.notes.find(n => n.id === targetNoteId);
-      if (!target) {
-        showToast('リンク先のノートが見つかりません（削除された可能性があります）', 'warning');
-        return;
+    function hideImageToolbar() {
+      if (el.imageFloatingToolbar) el.imageFloatingToolbar.classList.add('hidden');
+      if (state.activeEditorImg) {
+        state.activeEditorImg.classList.remove('selected-editor-img');
+        state.activeEditorImg = null;
       }
-      if (target.id === state.activeNoteId) return;
-
-      await flushPendingAutoSave();
-      hideImageToolbar();
-      closeWikiLinkPopup();
-
-      if (pushHistory && state.activeNoteId) {
-        state.noteHistory.push(state.activeNoteId);
-        if (state.noteHistory.length > 30) state.noteHistory.shift();
-      }
-
-      if (target.trashed) {
-        state.activeFilter = 'trash';
-      } else if (state.activeFilter === 'trash') {
-        state.activeFilter = 'all';
-      }
-
-      state.activeNoteId = target.id;
-      await ensureActiveNoteContentLoaded(target.id);
-      renderAll();
-      toggleMobileEditor(true);
     }
 
     function closeWikiLinkPopup() {
+      if (el.noteLinkPopup) {
+        el.noteLinkPopup.classList.add('hidden');
+        el.noteLinkPopup.innerHTML = '';
+      }
       state.wikiLinkState = null;
-      el.noteLinkPopup.classList.add('hidden');
-      el.noteLinkPopup.innerHTML = '';
     }
 
-    function checkWikiLinkTrigger() {
-      const sel = window.getSelection();
-      if (!sel || !sel.rangeCount || !sel.isCollapsed) return closeWikiLinkPopup();
+    function openImageLightbox(src) {
+      if (!src || !el.imageLightboxModal || !el.imgLightboxPreview) return;
+      el.imgLightboxPreview.src = src;
+      el.imageLightboxModal.classList.remove('hidden');
+    }
 
+    function closeImageLightbox() {
+      if (!el.imageLightboxModal) return;
+      el.imageLightboxModal.classList.add('hidden');
+      if (el.imgLightboxPreview) el.imgLightboxPreview.src = '';
+    }
+
+    function updateCompactToggleUI() {
+      if (el.iconViewCompact) el.iconViewCompact.classList.toggle('hidden', state.isCompactList);
+      if (el.iconViewCard) el.iconViewCard.classList.toggle('hidden', !state.isCompactList);
+    }
+
+    function checkAndShowWikiLinkPopup() {
+      const sel = window.getSelection();
+      if (!sel || !sel.rangeCount || !sel.isCollapsed) {
+        closeWikiLinkPopup();
+        return;
+      }
       const range = sel.getRangeAt(0);
       const node = range.startContainer;
-      if (node.nodeType !== Node.TEXT_NODE || !el.noteRichEditor.contains(node)) return closeWikiLinkPopup();
-
+      if (node.nodeType !== Node.TEXT_NODE || !el.noteRichEditor.contains(node)) {
+        closeWikiLinkPopup();
+        return;
+      }
       const textBefore = node.textContent.slice(0, range.startOffset);
-      const match = textBefore.match(/\[\[([^\[\]\r\n]{0,40})$/);
-      if (!match) return closeWikiLinkPopup();
+      const match = textBefore.match(/\[\[([^\[\]\n]{0,30})$/);
+      if (!match) {
+        closeWikiLinkPopup();
+        return;
+      }
 
-      const query = match[1].trim().toLowerCase();
+      const kw = match[1].trim().toLowerCase();
       const candidates = state.notes
         .filter(n => !n.trashed && n.id !== state.activeNoteId)
-        .filter(n => !query || `${n.title || ''} ${n.notebook || ''}`.toLowerCase().includes(query))
-        .slice(0, 8);
+        .filter(n => !kw || (n.title || '').toLowerCase().includes(kw))
+        .slice(0, 12);
+
+      if (!candidates.length) {
+        closeWikiLinkPopup();
+        return;
+      }
 
       state.wikiLinkState = {
         textNode: node,
-        startOffset: match.index,
+        startOffset: range.startOffset - match[0].length,
         endOffset: range.startOffset,
-        candidates,
-        selectedIndex: 0
+        candidates
       };
 
       const rect = range.getBoundingClientRect();
-      el.noteLinkPopup.style.left = `${Math.max(12, Math.min(window.innerWidth - 306, rect.left || 40))}px`;
-      el.noteLinkPopup.style.top = `${Math.min(window.innerHeight - 245, (rect.bottom || 120) + 6)}px`;
+      const top = Math.min(window.innerHeight - 240, Math.max(12, (rect.bottom || 120) + 6));
+      const left = Math.min(window.innerWidth - 305, Math.max(12, rect.left || 24));
 
-      if (!candidates.length) {
-        el.noteLinkPopup.innerHTML = `<div style="padding:10px;font-size:11px;color:var(--text-faint);text-align:center;">一致するノートがありません</div>`;
-      } else {
-        el.noteLinkPopup.innerHTML = candidates.map((n, idx) => `
-          <button type="button" data-wiki-idx="${idx}" class="wiki-link-item ${idx === 0 ? 'active' : ''}">
-            <span class="truncate" style="font-weight:600;">📄 ${escapeHtml(n.title || '無題のノート')}</span>
-            ${n.notebook ? `<span class="badge badge-muted truncate" style="max-width:90px;flex-shrink:0;">${escapeHtml(n.notebook)}</span>` : ''}
-          </button>`).join('');
-      }
+      el.noteLinkPopup.style.top = `${top}px`;
+      el.noteLinkPopup.style.left = `${left}px`;
+      el.noteLinkPopup.innerHTML = candidates.map((n, idx) => `
+        <button type="button" data-wiki-idx="${idx}" class="wiki-link-item ${idx === 0 ? 'active' : ''}">
+          <span class="truncate" style="font-weight:600;">📄 ${escapeHtml(n.title || '無題のノート')}</span>
+          ${n.notebook ? `<span class="badge badge-muted truncate" style="max-width:95px;flex-shrink:0;">${escapeHtml(n.notebook)}</span>` : ''}
+        </button>`).join('');
       el.noteLinkPopup.classList.remove('hidden');
     }
 
-    function applyWikiLinkSelection(targetNote) {
-      if (!state.wikiLinkState || !targetNote) return closeWikiLinkPopup();
+    function applyWikiLinkCandidate(targetNote) {
+      if (!state.wikiLinkState || !targetNote) return;
       const { textNode, startOffset, endOffset } = state.wikiLinkState;
+      closeWikiLinkPopup();
+      if (!el.noteRichEditor.contains(textNode)) return;
+
       const sel = window.getSelection();
       const range = document.createRange();
       range.setStart(textNode, startOffset);
@@ -5059,143 +5075,174 @@ ${contentHtml || '<p></p>'}
       sel.removeAllRanges();
       sel.addRange(range);
       document.execCommand('insertHTML', false, buildNoteLinkHtml(targetNote));
-      closeWikiLinkPopup();
       handleEditorContentChange(true);
     }
 
-    function showQuickJumpModal() {
-      const allActive = state.notes
-        .filter(n => !n.trashed)
-        .sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+    async function navigateToInternalNote(targetNoteId) {
+      const target = state.notes.find(n => n.id === targetNoteId);
+      if (!target) {
+        showToast('リンク先のノートが見つかりませんでした（削除済みの可能性があります）', 'warning');
+        return;
+      }
+      if (state.activeNoteId && state.activeNoteId !== targetNoteId) {
+        state.noteHistory.push(state.activeNoteId);
+        if (state.noteHistory.length > 30) state.noteHistory.shift();
+      }
+      await flushPendingAutoSave();
+      hideImageToolbar();
+      closeWikiLinkPopup();
+      if (target.trashed) state.activeFilter = 'trash';
+      state.activeNoteId = targetNoteId;
+      renderAll();
+      toggleMobileEditor(true);
+      await ensureActiveNoteContentLoaded(targetNoteId);
+    }
 
-      openDialog({
-        title: '⚡ クイックジャンプ（全ノート高速検索）',
-        message: 'タイトル・タグ・本文のキーワードを入力すると即座に候補へジャンプできます。',
+    async function showQuickJumpModal() {
+      const candidates = state.notes
+        .filter(n => !n.trashed)
+        .sort((a, b) => (b._updatedMs || 0) - (a._updatedMs || 0));
+
+      if (!candidates.length) {
+        showToast('ジャンプ先のノートがありません', 'info');
+        return;
+      }
+
+      const picked = await openDialog({
+        title: '⚡ クイックジャンプ (Ctrl+K / Cmd+K)',
+        message: 'タイトル・タグ・ノートブック名で絞り込んで素早く移動できます。',
         bodyHtml: `
           <div style="display:flex;flex-direction:column;gap:8px;">
-            <input id="dlg-qjump-input" class="field-input" placeholder="移動先のノート名やキーワードを入力...">
-            <div id="dlg-qjump-list" style="max-height:280px;overflow-y:auto;border:1px solid var(--border);border-radius:10px;padding:4px;display:flex;flex-direction:column;gap:2px;"></div>
+            <input id="dlg-qjump-input" class="field-input" placeholder="移動先のノート名を入力...">
+            <div id="dlg-qjump-list" style="max-height:260px;overflow-y:auto;border:1px solid var(--border);border-radius:10px;padding:4px;display:flex;flex-direction:column;gap:2px;"></div>
           </div>`,
         onSetup(close, body) {
           const inp = body.querySelector('#dlg-qjump-input');
           const listEl = body.querySelector('#dlg-qjump-list');
-          let currentMatches = allActive.slice(0, 40);
-          let selectedIdx = 0;
+          let currentFiltered = candidates.slice(0, 40);
 
-          const renderList = () => {
-            if (!currentMatches.length) {
-              listEl.innerHTML = `<div style="padding:18px;text-align:center;font-size:12px;color:var(--text-faint);">一致するノートがありません</div>`;
+          const renderItems = (q = '') => {
+            const kw = q.trim().toLowerCase();
+            currentFiltered = (kw
+              ? candidates.filter(n => (n._searchKey || buildSearchKey(n)).includes(kw))
+              : candidates
+            ).slice(0, 40);
+
+            if (!currentFiltered.length) {
+              listEl.innerHTML = `<div style="padding:16px;text-align:center;font-size:12px;color:var(--text-faint);">一致するノートがありません</div>`;
               return;
             }
-            listEl.innerHTML = currentMatches.map((n, i) => `
-              <button type="button" data-qjump-id="${escapeHtml(n.id)}" class="wiki-link-item ${i === selectedIdx ? 'active' : ''}">
+            listEl.innerHTML = currentFiltered.map((n, idx) => `
+              <button type="button" data-qjump-id="${escapeHtml(n.id)}" class="wiki-link-item ${idx === 0 ? 'active' : ''}">
                 <span class="truncate" style="font-weight:600;">📄 ${escapeHtml(n.title || '無題のノート')}</span>
-                <span style="display:flex;align-items:center;gap:4px;flex-shrink:0;">
-                  ${n.notebook ? `<span class="badge badge-muted truncate" style="max-width:100px;">${escapeHtml(n.notebook)}</span>` : ''}
-                  <span style="font-size:10px;color:var(--text-faint);">${formatDate(n.updatedAt).split(' ')[0]}</span>
-                </span>
+                <span class="badge badge-muted truncate" style="max-width:120px;flex-shrink:0;">${escapeHtml(n.notebook || '未分類')}</span>
               </button>`).join('');
           };
 
-          renderList();
+          renderItems();
           setTimeout(() => inp.focus(), 30);
-
-          inp.oninput = () => {
-            currentMatches = executeSearchQueryOnNotes(allActive, inp.value).slice(0, 40);
-            selectedIdx = 0;
-            renderList();
-          };
-
+          inp.oninput = () => renderItems(inp.value);
           inp.onkeydown = (e) => {
             if (e.isComposing || e.keyCode === 229) return;
-            if (e.key === 'ArrowDown') {
+            if (e.key === 'Enter' && currentFiltered.length > 0) {
               e.preventDefault();
-              if (currentMatches.length) {
-                selectedIdx = (selectedIdx + 1) % currentMatches.length;
-                renderList();
-              }
-            } else if (e.key === 'ArrowUp') {
-              e.preventDefault();
-              if (currentMatches.length) {
-                selectedIdx = (selectedIdx - 1 + currentMatches.length) % currentMatches.length;
-                renderList();
-              }
-            } else if (e.key === 'Enter' && currentMatches[selectedIdx]) {
-              e.preventDefault();
-              const picked = currentMatches[selectedIdx];
-              close(null);
-              navigateToLinkedNote(picked.id, true);
+              close(currentFiltered[0]);
             }
           };
-
           listEl.onclick = (e) => {
             const btn = e.target.closest('[data-qjump-id]');
             if (btn) {
-              close(null);
-              navigateToLinkedNote(btn.dataset.qjumpId, true);
+              const found = candidates.find(n => n.id === btn.dataset.qjumpId);
+              if (found) close(found);
             }
           };
         },
         rightBtns: [{ label: '閉じる', cls: 'btn-muted', value: null }]
       });
+
+      if (picked) {
+        await flushPendingAutoSave();
+        hideImageToolbar();
+        closeWikiLinkPopup();
+        state.activeNoteId = picked.id;
+        renderAll();
+        toggleMobileEditor(true);
+        await ensureActiveNoteContentLoaded(picked.id);
+      }
     }
 
-    function hideImageToolbar() {
-      if (state.activeEditorImg) { state.activeEditorImg.classList.remove('selected-editor-img'); state.activeEditorImg = null; }
-      el.imageFloatingToolbar.classList.add('hidden');
+    async function downloadSingleNoteAsHtml(note) {
+      if (!note) return;
+      await flushPendingAutoSave();
+      let contentHtml = '<p></p>';
+      if (state.activeNoteContentId === note.id && !state.isLoadingActiveContent) {
+        contentHtml = state.activeNoteContent || '<p></p>';
+      } else {
+        const cached = await loadNoteContentFromDB(note.id);
+        if (cached !== null) {
+          contentHtml = cached;
+        } else if (note.gdriveFileId && isGdriveConnected()) {
+          const res = await gdriveFetch(`https://www.googleapis.com/drive/v3/files/${note.gdriveFileId}?alt=media`, {}, 2, 90000);
+          const parsed = await parseHTMLToSeparatedNote(await res.text(), note.filename, [note.stack, note.notebook].filter(Boolean), note.gdriveFileId, note.gdriveModifiedTime);
+          contentHtml = parsed.content;
+        }
+      }
+      const fullHtml = serializeNoteToHTML(note, contentHtml);
+      const blob = new Blob([fullHtml], { type: 'text/html;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = ensureHtmlFilename(note.title, note.id, note.filename);
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1500);
+      showToast('HTMLファイルをダウンロードしました', 'success');
     }
 
     function bindAllEvents() {
       el.openSidebarBtn.onclick = () => toggleMobileSidebar(true);
       el.closeSidebarBtn.onclick = () => toggleMobileSidebar(false);
       el.sidebarBackdrop.onclick = () => toggleMobileSidebar(false);
-      el.mobileBackBtn.onclick = () => toggleMobileEditor(false);
       el.themeToggleBtn.onclick = () => applyTheme(!document.documentElement.classList.contains('dark'));
 
-      el.quickJumpBtn.onclick = () => showQuickJumpModal();
+      el.newNoteBtn.onclick = async () => { toggleMobileSidebar(false); await createNewNote(); };
+      el.emptyCreateBtn.onclick = async () => { await createNewNote(); };
 
+      el.connectGdriveBtn.onclick = async () => { await connectGoogleDriveFlow(); };
+      el.syncGdriveNowBtn.onclick = async () => { await syncWithGoogleDrive(true); };
       el.abortSyncBtn.onclick = () => {
         state.abortSyncRequested = true;
-        el.syncProgressLabel.textContent = '中断処理中...';
+        showToast('安全な区切りで処理を中断しています...', 'info', 2500);
       };
 
-      el.connectGdriveBtn.onclick = connectGoogleDriveFlow;
-      el.syncGdriveNowBtn.onclick = () => syncWithGoogleDrive(true);
       el.gdriveSettingsBtn.onclick = async () => {
         const res = await showGdriveSettingsModal();
         if (!res) return;
         if (res.action === 'logout') {
-          if (state.gdriveToken && window.google?.accounts?.oauth2) {
-            try { window.google.accounts.oauth2.revoke(state.gdriveToken, () => {}); } catch {}
-          }
+          try { if (state.gdriveToken && window.google?.accounts?.oauth2) window.google.accounts.oauth2.revoke(state.gdriveToken, () => {}); } catch {}
           state.gdriveToken = null;
           state.gdriveTokenExpiry = 0;
-          state.gdriveRootFolderId = null;
-          state.gdriveFolderCache.clear();
           updateGdriveStatusUI();
-          showToast('Googleアカウントからログアウトしました', 'info');
+          showToast('Googleドライブからログアウトしました', 'info');
         } else if (res.action === 'full_resync') {
-          showToast('次回同期時に全フォルダをフルスキャン照合します', 'info');
-          if (isGdriveConnected()) syncWithGoogleDrive(true);
+          await syncWithGoogleDrive(true);
         } else if (res.action === 'clear_all') {
           const ok = await showConfirmModal({
             title: '端末内インデックスの初期化',
-            message: 'このブラウザに保存されている軽量インデックスと本文キャッシュを削除します。\n（※Googleドライブ上のHTMLファイルは一切削除されません）\nよろしいですか？',
-            confirmText: '端末内データを消去',
+            message: '端末内のキャッシュデータをすべて消去しますか？（Googleドライブ上のファイルは削除されません）',
+            confirmText: '消去する',
             isDanger: true
           });
-          if (!ok) return;
-          state.notes = [];
-          state.notebooks = [];
-          state.activeNoteId = null;
-          state.activeNoteContentId = null;
-          state.activeNoteContent = '<p></p>';
-          state.noteHistory = [];
-          await clearAllDBStores();
-          renderAll();
-          showToast('端末内データを空にしました。再同期するとGoogleドライブから再構築できます', 'success');
+          if (ok) {
+            await clearAllDBStores();
+            state.notes = [];
+            state.notebooks = [];
+            releaseActiveEditorMemory();
+            renderAll();
+            showToast('端末内データを初期化しました', 'info');
+          }
         } else if (res.action === 'save') {
-          const folderChanged = state.gdriveFolderName !== res.folderName;
           state.gdriveClientId = res.clientId;
           state.gdriveFolderName = res.folderName;
           state.gdriveAttachFolderName = res.attachFolderName;
@@ -5204,120 +5251,177 @@ ${contentHtml || '<p></p>'}
           localStorage.setItem(LS_FOLDER_NAME_KEY, state.gdriveFolderName);
           localStorage.setItem(LS_ATTACH_FOLDER_KEY, state.gdriveAttachFolderName);
           localStorage.setItem(LS_IMAGE_OPT_KEY, state.imageOptimizeMode);
-          if (folderChanged) {
-            state.gdriveRootFolderId = null;
-            state.gdriveFolderCache.clear();
-            await clearDriveChangeToken();
-          }
           updateGdriveStatusUI();
           await connectGoogleDriveFlow();
         }
       };
 
-      el.newNoteBtn.onclick = () => { toggleMobileSidebar(false); createNewNote(); };
-      el.emptyCreateBtn.onclick = () => createNewNote();
-
-      document.getElementById('left-sidebar').onclick = async (e) => {
-        const toggleBtn = e.target.closest('[data-toggle-stack]');
-        if (toggleBtn) {
-          const s = toggleBtn.dataset.toggleStack;
-          state.collapsedStacks.has(s) ? state.collapsedStacks.delete(s) : state.collapsedStacks.add(s);
-          return renderSidebar();
-        }
-        const editStackBtn = e.target.closest('[data-edit-stack]');
-        if (editStackBtn) {
-          e.stopPropagation();
-          const oldStack = editStackBtn.dataset.editStack;
-          const res = await showStackModal(oldStack);
-          if (!res) return;
-          if (res.action === 'ungroup') await renameOrUngroupStack(oldStack, '');
-          else if (res.action === 'rename' && res.newStack !== oldStack) await renameOrUngroupStack(oldStack, res.newStack);
-          return;
-        }
-        const editNbBtn = e.target.closest('[data-edit-nb]');
-        if (editNbBtn) {
-          e.stopPropagation();
-          const oldNb = editNbBtn.dataset.editNb;
-          const res = await showNotebookModal({ title: 'ノートブックの編集・移動', initialNotebook: oldNb, initialStack: getAllNotebooksMap().get(oldNb)?.stack || '', isEdit: true });
-          if (!res) return;
-          if (res.action === 'delete') await deleteNotebook(oldNb);
-          else if (res.action === 'save') { await createOrUpdateNotebook(oldNb, res.notebook, res.stack); showToast('ノートブック設定を更新しました', 'success'); }
-          return;
-        }
-        const filterBtn = e.target.closest('.filter-btn');
-        if (filterBtn) {
+      document.querySelectorAll('.filter-btn').forEach(btn => {
+        btn.onclick = async () => {
           await flushPendingAutoSave();
-          state.activeFilter = filterBtn.dataset.filter;
+          state.activeFilter = btn.dataset.filter;
           state.selectedNoteIds.clear();
+          toggleMobileSidebar(false);
           if (isMobileViewport()) {
             releaseActiveEditorMemory();
-          } else {
-            const filtered = getFilteredAndSortedNotes();
-            if (!filtered.some(n => n.id === state.activeNoteId)) {
-              state.activeNoteId = filtered[0]?.id || null;
-              if (state.activeNoteId) await ensureActiveNoteContentLoaded(state.activeNoteId);
-            }
+            toggleMobileEditor(false);
           }
-          toggleMobileSidebar(false);
           renderAll();
-        }
-      };
+        };
+      });
 
       el.createNotebookBtn.onclick = async () => {
-        const res = await showNotebookModal({ title: '新しいノートブック・スタックを作成', initialStack: state.activeFilter.startsWith('stack:') ? state.activeFilter.slice(6) : '' });
-        if (res?.action === 'save') {
+        const res = await showNotebookModal({ title: '新しいノートブック・スタックを作成' });
+        if (res && res.action === 'save') {
           await createOrUpdateNotebook('', res.notebook, res.stack);
-          state.activeFilter = `notebook:${res.notebook}`;
-          renderAll();
           showToast(`ノートブック「${res.notebook}」を作成しました`, 'success');
         }
       };
 
       el.quickNewNotebookInlineBtn.onclick = async () => {
-        const res = await showNotebookModal({ title: '新しいノートブックを作成して移動' });
-        if (res?.action === 'save') {
+        const res = await showNotebookModal({ title: '新しいノートブックを作成' });
+        if (res && res.action === 'save') {
           await createOrUpdateNotebook('', res.notebook, res.stack);
-          if (state.activeNoteId) await moveNoteToNotebook(state.activeNoteId, res.notebook);
+          if (state.activeNoteId) {
+            await moveNoteToNotebook(state.activeNoteId, res.notebook, false);
+          }
         }
       };
 
-      el.searchInput.oninput = (e) => {
-        state.searchQuery = e.target.value;
-        el.clearSearchBtn.classList.toggle('hidden', !state.searchQuery);
+      el.sidebarNotebooksTree.onclick = async (e) => {
+        const toggleStackBtn = e.target.closest('[data-toggle-stack]');
+        if (toggleStackBtn) {
+          e.stopPropagation();
+          const stName = toggleStackBtn.dataset.toggleStack;
+          if (state.collapsedStacks.has(stName)) state.collapsedStacks.delete(stName);
+          else state.collapsedStacks.add(stName);
+          renderSidebar();
+          return;
+        }
+
+        const editNbBtn = e.target.closest('[data-edit-nb]');
+        if (editNbBtn) {
+          e.stopPropagation();
+          const nbName = editNbBtn.dataset.editNb;
+          const currentStack = getAllNotebooksMap().get(nbName)?.stack || '';
+          const res = await showNotebookModal({ title: 'ノートブックの編集・移動', initialNotebook: nbName, initialStack: currentStack, isEdit: true });
+          if (!res) return;
+          if (res.action === 'delete') {
+            if (await showConfirmModal({ title: 'ノートブックの削除', message: `「${nbName}」を削除しますか？\n中のノートは削除されず「未分類」へ移動します。`, confirmText: '削除する', isDanger: true })) {
+              await deleteNotebook(nbName);
+            }
+          } else if (res.action === 'save') {
+            await createOrUpdateNotebook(nbName, res.notebook, res.stack);
+            showToast('ノートブック設定を更新しました', 'success');
+          }
+          return;
+        }
+
+        const editStackBtn = e.target.closest('[data-edit-stack]');
+        if (editStackBtn) {
+          e.stopPropagation();
+          const stName = editStackBtn.dataset.editStack;
+          const res = await showStackModal(stName);
+          if (!res) return;
+          if (res.action === 'ungroup') {
+            await renameOrUngroupStack(stName, '');
+          } else if (res.action === 'rename') {
+            await renameOrUngroupStack(stName, res.newStack);
+          }
+          return;
+        }
+
+        const filterBtn = e.target.closest('.filter-btn');
+        if (filterBtn) {
+          await flushPendingAutoSave();
+          state.activeFilter = filterBtn.dataset.filter;
+          state.selectedNoteIds.clear();
+          toggleMobileSidebar(false);
+          if (isMobileViewport()) {
+            releaseActiveEditorMemory();
+            toggleMobileEditor(false);
+          }
+          renderAll();
+        }
+      };
+
+      el.importEnexBtn.onclick = () => el.enexFileInput.click();
+      el.enexFileInput.onchange = async (e) => {
+        if (e.target.files?.length) {
+          toggleMobileSidebar(false);
+          await handleDroppedOrSelectedFiles(e.target.files, false);
+          e.target.value = '';
+        }
+      };
+
+      el.searchInput.oninput = () => {
+        el.clearSearchBtn.classList.toggle('hidden', !el.searchInput.value);
         clearTimeout(state.searchDebounceTimer);
         state.searchDebounceTimer = setTimeout(() => {
+          state.searchQuery = el.searchInput.value;
           renderNotesList(true);
-        }, 120);
+        }, 160);
       };
+
       el.clearSearchBtn.onclick = () => {
-        state.searchQuery = '';
         el.searchInput.value = '';
         el.clearSearchBtn.classList.add('hidden');
+        state.searchQuery = '';
         renderNotesList(true);
       };
-      el.sortFieldSelect.onchange = (e) => {
-        state.sortField = e.target.value;
+
+      el.quickJumpBtn.onclick = async () => { await showQuickJumpModal(); };
+
+      el.sortFieldSelect.onchange = () => {
+        state.sortField = el.sortFieldSelect.value;
         saveSortPrefs();
         updateSortControlUI();
         renderNotesList(true);
       };
+
       el.sortDirBtn.onclick = () => {
         state.sortDir = state.sortDir === 'asc' ? 'desc' : 'asc';
         saveSortPrefs();
         updateSortControlUI();
         renderNotesList(true);
       };
+
       el.toggleCompactListBtn.onclick = () => {
         state.isCompactList = !state.isCompactList;
-        localStorage.setItem('loosenote-compact', state.isCompactList);
-        el.iconViewCompact.classList.toggle('hidden', state.isCompactList);
-        el.iconViewCard.classList.toggle('hidden', !state.isCompactList);
+        localStorage.setItem('loosenote-compact', String(state.isCompactList));
+        updateCompactToggleUI();
         renderNotesList(false);
+      };
+
+      el.emptyTrashBtn.onclick = async () => {
+        const trashedNotes = state.notes.filter(n => n.trashed);
+        if (!trashedNotes.length) return;
+        const ok = await showConfirmModal({
+          title: 'ゴミ箱を空にする',
+          message: `ゴミ箱内の ${trashedNotes.length} 件のノートを完全に削除しますか？\nこの操作は取り消せません。`,
+          confirmText: 'すべて完全削除',
+          isDanger: true
+        });
+        if (!ok) return;
+        for (const n of trashedNotes) {
+          await deleteSingleNoteFromDB(n.id);
+          await deleteNoteFromGoogleDrive(n.gdriveFileId);
+        }
+        state.notes = state.notes.filter(n => !n.trashed);
+        state.selectedNoteIds.clear();
+        if (!state.notes.some(n => n.id === state.activeNoteId)) {
+          releaseActiveEditorMemory();
+        }
+        if (isGdriveConnected()) {
+          await enqueueDriveTask(() => cleanupEmptyDriveFolderByPath(['_Trash']));
+        }
+        renderAll();
+        showToast('ゴミ箱を空にしました', 'info');
       };
 
       el.notesListContainer.onscroll = () => {
         const container = el.notesListContainer;
-        if (container.scrollTop + container.clientHeight >= container.scrollHeight - 280) {
+        if (container.scrollTop + container.clientHeight >= container.scrollHeight - 160) {
           appendNextPageOfNotesList();
         }
       };
@@ -5327,16 +5431,23 @@ ${contentHtml || '<p></p>'}
           appendNextPageOfNotesList();
           return;
         }
-        const check = e.target.closest('[data-check-id]');
-        if (check) {
+
+        const checkbox = e.target.closest('input[data-check-id]');
+        if (checkbox) {
           e.stopPropagation();
-          const id = check.dataset.checkId;
-          check.checked ? state.selectedNoteIds.add(id) : state.selectedNoteIds.delete(id);
-          return renderNotesList(false);
+          const id = checkbox.dataset.checkId;
+          if (checkbox.checked) state.selectedNoteIds.add(id);
+          else state.selectedNoteIds.delete(id);
+          renderNotesList(false);
+          return;
         }
+
         const card = e.target.closest('[data-note-id]');
         if (card) {
           const nextId = card.dataset.noteId;
+          if (document.activeElement === el.noteRichEditor) {
+            el.noteRichEditor.blur();
+          }
           await flushPendingAutoSave();
           hideImageToolbar();
           closeWikiLinkPopup();
@@ -5347,31 +5458,40 @@ ${contentHtml || '<p></p>'}
         }
       };
 
-      el.bulkSelectAllCheckbox.onchange = (e) => {
-        getFilteredAndSortedNotes().forEach(n => e.target.checked ? state.selectedNoteIds.add(n.id) : state.selectedNoteIds.delete(n.id));
+      el.bulkSelectAllCheckbox.onchange = () => {
+        const filtered = getFilteredAndSortedNotes();
+        if (el.bulkSelectAllCheckbox.checked) {
+          filtered.forEach(n => state.selectedNoteIds.add(n.id));
+        } else {
+          state.selectedNoteIds.clear();
+        }
         renderNotesList(false);
       };
+
       el.bulkMoveBtn.onclick = async () => {
         const ids = Array.from(state.selectedNoteIds);
         if (!ids.length) return;
         const targetNb = await showBulkActionModal('move', ids.length);
         if (targetNb === null) return;
-        for (const id of ids) await moveNoteToNotebook(id, targetNb, true);
+        for (const id of ids) {
+          await moveNoteToNotebook(id, targetNb, true);
+        }
         state.selectedNoteIds.clear();
         await saveAllMetaStateToDB();
         renderAll();
-        if (isGdriveConnected()) syncWithGoogleDrive(false);
+        if (isGdriveConnected()) await syncWithGoogleDrive(false);
         showToast(`${ids.length} 件のノートを移動しました`, 'success');
       };
+
       el.bulkTagBtn.onclick = async () => {
         const ids = Array.from(state.selectedNoteIds);
         if (!ids.length) return;
-        const tag = await showBulkActionModal('tag', ids.length);
-        if (!tag) return;
+        const newTag = await showBulkActionModal('tag', ids.length);
+        if (!newTag) return;
         for (const id of ids) {
-          const n = state.notes.find(x => x.id === id);
-          if (n && !n.tags.includes(tag)) {
-            n.tags.push(tag);
+          const n = state.notes.find(item => item.id === id);
+          if (n && !n.tags.includes(newTag)) {
+            n.tags.push(newTag);
             n.updatedAt = new Date().toISOString();
             n.needsSync = true;
             n.metaHtmlDirty = true;
@@ -5381,190 +5501,138 @@ ${contentHtml || '<p></p>'}
         state.selectedNoteIds.clear();
         await saveAllMetaStateToDB();
         renderAll();
-        if (isGdriveConnected()) syncWithGoogleDrive(false);
-        showToast(`${ids.length} 件のノートに「#${tag}」を付与しました`, 'success');
+        if (isGdriveConnected()) await syncWithGoogleDrive(false);
+        showToast(`${ids.length} 件のノートにタグ「#${newTag}」を追加しました`, 'success');
       };
+
       el.bulkTrashBtn.onclick = async () => {
         const ids = Array.from(state.selectedNoteIds);
         if (!ids.length) return;
         const isTrash = state.activeFilter === 'trash';
-        if (!await showConfirmModal({ title: isTrash ? '一括完全削除' : '一括ゴミ箱移動', message: `選択中の ${ids.length} 件のノートを${isTrash ? '完全に削除' : 'ゴミ箱へ移動'}しますか？`, confirmText: isTrash ? '完全に削除' : 'ゴミ箱へ移動', isDanger: true })) return;
-        if (isTrash) {
-          for (const id of ids) {
-            const target = state.notes.find(n => n.id === id);
-            if (target?.gdriveFileId) await deleteNoteFromGoogleDrive(target.gdriveFileId);
+        const ok = await showConfirmModal({
+          title: isTrash ? '選択ノートの完全削除' : '選択ノートをゴミ箱へ移動',
+          message: isTrash
+            ? `選択中の ${ids.length} 件を完全に削除しますか？この操作は取り消せません。`
+            : `選択中の ${ids.length} 件をゴミ箱へ移動しますか？`,
+          confirmText: isTrash ? '完全に削除' : 'ゴミ箱へ移動',
+          isDanger: isTrash
+        });
+        if (!ok) return;
+
+        for (const id of ids) {
+          const n = state.notes.find(item => item.id === id);
+          if (!n) continue;
+          if (isTrash) {
             await deleteSingleNoteFromDB(id);
+            await deleteNoteFromGoogleDrive(n.gdriveFileId);
+          } else {
+            n.trashed = true;
+            n.pinned = false;
+            n.updatedAt = new Date().toISOString();
+            n.needsSync = true;
+            n.metaHtmlDirty = true;
           }
-          state.notes = state.notes.filter(n => !ids.includes(n.id));
-          if (isGdriveConnected()) {
-            await enqueueDriveTask(() => cleanupEmptyDriveFolderByPath(['_Trash']));
-          }
-        } else {
-          for (const id of ids) {
-            const n = state.notes.find(x => x.id === id);
-            if (n) {
-              n.trashed = true;
-              n.pinned = false;
-              n.updatedAt = new Date().toISOString();
-              n.needsSync = true;
-              n.metaHtmlDirty = true;
-            }
-          }
-          await saveAllMetaStateToDB();
-          if (isGdriveConnected()) syncWithGoogleDrive(false);
+        }
+        if (isTrash) {
+          const idSet = new Set(ids);
+          state.notes = state.notes.filter(n => !idSet.has(n.id));
         }
         state.selectedNoteIds.clear();
         if (!state.notes.some(n => n.id === state.activeNoteId)) {
-          state.activeNoteId = getFilteredAndSortedNotes()[0]?.id || null;
-          if (state.activeNoteId) await ensureActiveNoteContentLoaded(state.activeNoteId);
+          releaseActiveEditorMemory();
         }
+        await saveAllMetaStateToDB();
         renderAll();
-        showToast(`${ids.length} 件のノートを処理しました`, 'info');
-      };
-      el.emptyTrashBtn.onclick = async () => {
-        const trashed = state.notes.filter(n => n.trashed);
-        if (!trashed.length || !await showConfirmModal({ title: 'ゴミ箱を空にする', message: `ゴミ箱内の ${trashed.length} 件のノートをすべて完全に削除しますか？`, confirmText: 'すべて完全削除', isDanger: true })) return;
-        for (const n of trashed) {
-          if (n.gdriveFileId) await deleteNoteFromGoogleDrive(n.gdriveFileId);
-          await deleteSingleNoteFromDB(n.id);
-        }
-        state.notes = state.notes.filter(n => !n.trashed);
-        if (isGdriveConnected()) {
-          await enqueueDriveTask(() => cleanupEmptyDriveFolderByPath(['_Trash']));
-        }
-        state.activeNoteId = null;
-        renderAll();
-        showToast('ゴミ箱を空にしました', 'info');
+        if (!isTrash && isGdriveConnected()) await syncWithGoogleDrive(false);
+        showToast(isTrash ? `${ids.length} 件を完全に削除しました` : `${ids.length} 件をゴミ箱へ移動しました`, 'info');
       };
 
-      el.noteTitleInput.oninput = (e) => {
-        const note = state.notes.find(n => n.id === state.activeNoteId);
-        if (note) {
-          note.title = e.target.value;
-          note.updatedAt = new Date().toISOString();
-          note.needsSync = true;
-          note.metaHtmlDirty = true;
-          note._searchKey = buildSearchKey(note);
-          updateSingleNoteCardInList(note);
-          scheduleAutoSave();
-        }
+      el.mobileBackBtn.onclick = async () => {
+        await flushPendingAutoSave();
+        hideImageToolbar();
+        closeWikiLinkPopup();
+        toggleMobileEditor(false);
+        releaseActiveEditorMemory();
+        renderNotesList(false);
       };
 
-      el.editCreatedBtn.onclick = async () => {
+      el.navBackNoteBtn.onclick = async () => {
+        const prevId = state.noteHistory.pop();
+        if (!prevId) {
+          renderEditor();
+          return;
+        }
+        await flushPendingAutoSave();
+        hideImageToolbar();
+        closeWikiLinkPopup();
+        state.activeNoteId = prevId;
+        renderAll();
+        await ensureActiveNoteContentLoaded(prevId);
+      };
+
+      el.pinNoteBtn.onclick = async () => {
         const note = state.notes.find(n => n.id === state.activeNoteId);
         if (!note || note.trashed) return;
-        const newCreatedIso = await showEditCreatedDateModal(note.createdAt);
-        if (!newCreatedIso) return;
-        note.createdAt = newCreatedIso;
+        note.pinned = !note.pinned;
         note.updatedAt = new Date().toISOString();
         note.needsSync = true;
         note.metaHtmlDirty = true;
         await saveSingleNoteMetaToDB(note);
         await uploadNoteToGoogleDrive(note);
-        renderNotesList(false);
-        renderEditor();
-        showToast(`作成日時を ${formatDate(newCreatedIso)} に変更しました`, 'success');
-      };
-
-      el.noteNotebookSelect.onchange = (e) => { if (state.activeNoteId) moveNoteToNotebook(state.activeNoteId, e.target.value); };
-      el.addTagInput.onkeydown = async (e) => {
-        if (e.isComposing || e.keyCode === 229) return;
-        if (e.key === 'Enter' && e.target.value.trim()) {
-          e.preventDefault();
-          const note = state.notes.find(n => n.id === state.activeNoteId);
-          const tag = e.target.value.trim().replace(/^#+/, '');
-          if (note && tag && !note.tags.includes(tag)) {
-            note.tags.push(tag);
-            note.updatedAt = new Date().toISOString();
-            note.needsSync = true;
-            note.metaHtmlDirty = true;
-            note._searchKey = buildSearchKey(note);
-            await saveSingleNoteMetaToDB(note);
-            await uploadNoteToGoogleDrive(note);
-            renderNotesList(false);
-            renderEditor();
-          }
-          e.target.value = '';
-        }
-      };
-      el.activeNoteTags.onclick = async (e) => {
-        const btn = e.target.closest('[data-remove-tag]');
-        const note = state.notes.find(n => n.id === state.activeNoteId);
-        if (btn && note) {
-          note.tags = note.tags.filter(t => t !== btn.dataset.removeTag);
-          note.updatedAt = new Date().toISOString();
-          note.needsSync = true;
-          note.metaHtmlDirty = true;
-          note._searchKey = buildSearchKey(note);
-          await saveSingleNoteMetaToDB(note);
-          await uploadNoteToGoogleDrive(note);
-          renderNotesList(false);
-          renderEditor();
-        }
-      };
-      el.pinNoteBtn.onclick = async () => {
-        const note = state.notes.find(n => n.id === state.activeNoteId);
-        if (note && !note.trashed) {
-          note.pinned = !note.pinned;
-          note.updatedAt = new Date().toISOString();
-          note.needsSync = true;
-          note.metaHtmlDirty = true;
-          await saveSingleNoteMetaToDB(note);
-          await uploadNoteToGoogleDrive(note);
-          renderNotesList(false);
-          renderEditor();
-          showToast(note.pinned ? 'ノートをピン留めしました' : 'ピン留めを解除しました', 'info');
-        }
-      };
-      el.deleteNoteBtn.onclick = () => { if (state.activeNoteId) moveNoteToTrash(state.activeNoteId); };
-      el.restoreTrashedNoteBtn.onclick = () => { if (state.activeNoteId) restoreNoteFromTrash(state.activeNoteId); };
-      el.permanentDeleteNoteBtn.onclick = () => { if (state.activeNoteId) moveNoteToTrash(state.activeNoteId); };
-
-      el.navBackNoteBtn.onclick = () => {
-        const prevId = state.noteHistory.pop();
-        if (prevId) navigateToLinkedNote(prevId, false);
-        else renderEditor();
+        renderAll();
+        showToast(note.pinned ? 'ノートをピン留めしました' : 'ピン留めを解除しました', 'info', 2200);
       };
 
       el.downloadSingleHtmlBtn.onclick = async () => {
         const note = state.notes.find(n => n.id === state.activeNoteId);
-        if (!note) return;
-        const contentHtml = await ensureActiveNoteContentLoaded(note.id);
-        const blob = new Blob([serializeNoteToHTML(note, contentHtml)], { type: 'text/html;charset=utf-8' });
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = ensureHtmlFilename(note.title, note.id, note.filename);
-        a.click();
-        setTimeout(() => URL.revokeObjectURL(a.href), 1500);
+        if (note) await downloadSingleNoteAsHtml(note);
       };
 
-      el.editorToolbar.onclick = (e) => {
-        const btn = e.target.closest('.toolbar-btn');
-        if (btn) {
+      el.deleteNoteBtn.onclick = async () => {
+        if (state.activeNoteId) await moveNoteToTrash(state.activeNoteId);
+      };
+
+      el.restoreTrashedNoteBtn.onclick = async () => {
+        if (state.activeNoteId) await restoreNoteFromTrash(state.activeNoteId);
+      };
+
+      el.permanentDeleteNoteBtn.onclick = async () => {
+        if (state.activeNoteId) await moveNoteToTrash(state.activeNoteId);
+      };
+
+      document.querySelectorAll('.toolbar-btn').forEach(btn => {
+        btn.onmousedown = (e) => e.preventDefault();
+        btn.onclick = () => {
+          const cmd = btn.dataset.cmd;
+          if (!cmd) return;
           el.noteRichEditor.focus();
-          document.execCommand(btn.dataset.cmd, false, btn.dataset.val || null);
+          document.execCommand(cmd, false, null);
           handleEditorContentChange(true);
-        }
-      };
-      el.insertCheckboxBtn.onclick = () => insertHtmlIntoActiveEditor(`<input type="checkbox" style="margin-right:6px;">&nbsp;`);
-      el.insertTableBtn.onclick = () => insertHtmlIntoActiveEditor(
-        `<table><thead><tr><th>項目1</th><th>項目2</th><th>項目3</th></tr></thead><tbody><tr><td><br></td><td><br></td><td><br></td></tr><tr><td><br></td><td><br></td><td><br></td></tr></tbody></table><p></p>`
-      );
+        };
+      });
 
-      el.insertNoteLinkBtn.onclick = async () => {
+      el.insertCheckboxBtn.onmousedown = (e) => e.preventDefault();
+      el.insertCheckboxBtn.onclick = () => {
+        insertHtmlIntoActiveEditor('<p><input type="checkbox" style="margin-right:6px;"> </p>');
+      };
+
+      el.insertTableBtn.onmousedown = (e) => e.preventDefault();
+      el.insertTableBtn.onclick = () => {
+        insertHtmlIntoActiveEditor(`<table><thead><tr><th>項目1</th><th>項目2</th><th>項目3</th></tr></thead><tbody><tr><td><br></td><td><br></td><td><br></td></tr><tr><td><br></td><td><br></td><td><br></td></tr></tbody></table><p></p>`);
+      };
+
+      el.embedMediaBtn.onclick = () => {
         const sel = window.getSelection();
         if (sel && sel.rangeCount && el.noteRichEditor.contains(sel.getRangeAt(0).commonAncestorContainer)) {
           state.savedEditorRange = sel.getRangeAt(0).cloneRange();
         }
-        const target = await showNoteLinkPickerModal();
-        if (target) insertHtmlIntoActiveEditor(buildNoteLinkHtml(target));
+        el.embedMediaInput.click();
       };
 
-      el.noteLinkPopup.onclick = (e) => {
-        const item = e.target.closest('[data-wiki-idx]');
-        if (item && state.wikiLinkState) {
-          const target = state.wikiLinkState.candidates[Number(item.dataset.wikiIdx)];
-          if (target) applyWikiLinkSelection(target);
+      el.embedMediaInput.onchange = async (e) => {
+        if (e.target.files?.length) {
+          await handleDroppedOrSelectedFiles(e.target.files, true);
+          e.target.value = '';
         }
       };
 
@@ -5573,128 +5641,168 @@ ${contentHtml || '<p></p>'}
         if (sel && sel.rangeCount && el.noteRichEditor.contains(sel.getRangeAt(0).commonAncestorContainer)) {
           state.savedEditorRange = sel.getRangeAt(0).cloneRange();
         }
-        const info = await showLinkCardModal();
-        if (!info) return;
-        insertHtmlIntoActiveEditor(buildLinkOperationCardHtml(info));
+        const res = await showLinkCardModal();
+        if (res) {
+          insertHtmlIntoActiveEditor(buildLinkOperationCardHtml(res));
+        }
+      };
+
+      el.insertNoteLinkBtn.onclick = async () => {
+        const sel = window.getSelection();
+        if (sel && sel.rangeCount && el.noteRichEditor.contains(sel.getRangeAt(0).commonAncestorContainer)) {
+          state.savedEditorRange = sel.getRangeAt(0).cloneRange();
+        }
+        const targetNote = await showNoteLinkPickerModal();
+        if (targetNote) {
+          insertHtmlIntoActiveEditor(buildNoteLinkHtml(targetNote));
+        }
+      };
+
+      el.noteNotebookSelect.onchange = async (e) => {
+        if (state.activeNoteId) {
+          await moveNoteToNotebook(state.activeNoteId, e.target.value, false);
+        }
+      };
+
+      el.editCreatedBtn.onclick = async () => {
+        const note = state.notes.find(n => n.id === state.activeNoteId);
+        if (!note || note.trashed) return;
+        const newIso = await showEditCreatedDateModal(note.createdAt);
+        if (!newIso) return;
+        note.createdAt = newIso;
+        note.updatedAt = new Date().toISOString();
+        note.needsSync = true;
+        note.metaHtmlDirty = true;
+        note._searchKey = buildSearchKey(note);
+        await saveSingleNoteMetaToDB(note);
+        await uploadNoteToGoogleDrive(note);
+        renderAll();
+        showToast('作成日時を変更しました', 'success');
+      };
+
+      el.noteTitleInput.oninput = () => {
+        const note = state.notes.find(n => n.id === state.activeNoteId);
+        if (!note) return;
+        note.title = el.noteTitleInput.value;
+        note.updatedAt = new Date().toISOString();
+        note.needsSync = true;
+        note.metaHtmlDirty = true;
+        note._searchKey = buildSearchKey(note);
+        el.noteUpdatedDisplay.textContent = `更新: ${formatDate(note.updatedAt)}`;
+        updateSingleNoteCardInList(note);
+        scheduleAutoSave();
+      };
+
+      el.addTagInput.onkeydown = async (e) => {
+        if (e.isComposing || e.keyCode === 229) return;
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          const note = state.notes.find(n => n.id === state.activeNoteId);
+          const tag = el.addTagInput.value.trim().replace(/^#+/, '');
+          el.addTagInput.value = '';
+          if (!note || !tag || note.tags.includes(tag)) return;
+          note.tags.push(tag);
+          note.updatedAt = new Date().toISOString();
+          note.needsSync = true;
+          note.metaHtmlDirty = true;
+          note._searchKey = buildSearchKey(note);
+          await saveSingleNoteMetaToDB(note);
+          await uploadNoteToGoogleDrive(note);
+          renderAll();
+        }
+      };
+
+      el.activeNoteTags.onclick = async (e) => {
+        const btn = e.target.closest('[data-remove-tag]');
+        if (!btn) return;
+        const note = state.notes.find(n => n.id === state.activeNoteId);
+        if (!note) return;
+        const tag = btn.dataset.removeTag;
+        note.tags = note.tags.filter(t => t !== tag);
+        note.updatedAt = new Date().toISOString();
+        note.needsSync = true;
+        note.metaHtmlDirty = true;
+        note._searchKey = buildSearchKey(note);
+        await saveSingleNoteMetaToDB(note);
+        await uploadNoteToGoogleDrive(note);
+        renderAll();
       };
 
       el.noteRichEditor.oninput = () => {
         handleEditorContentChange(false);
-        checkWikiLinkTrigger();
+        checkAndShowWikiLinkPopup();
+      };
+
+      el.noteRichEditor.onchange = (e) => {
+        if (e.target && e.target.matches('input[type="checkbox"]')) {
+          if (e.target.checked) e.target.setAttribute('checked', 'checked');
+          else e.target.removeAttribute('checked');
+          handleEditorContentChange(true);
+        }
       };
 
       el.noteRichEditor.onkeydown = (e) => {
         if (e.isComposing || e.keyCode === 229) return;
-        if (!el.noteLinkPopup.classList.contains('hidden') && state.wikiLinkState) {
-          const count = state.wikiLinkState.candidates.length;
+        if (state.wikiLinkState && !el.noteLinkPopup.classList.contains('hidden')) {
           if (e.key === 'Escape') {
             e.preventDefault();
-            return closeWikiLinkPopup();
-          }
-          if (count > 0) {
-            if (e.key === 'ArrowDown') {
-              e.preventDefault();
-              state.wikiLinkState.selectedIndex = (state.wikiLinkState.selectedIndex + 1) % count;
-              el.noteLinkPopup.querySelectorAll('.wiki-link-item').forEach((btn, i) => {
-                btn.classList.toggle('active', i === state.wikiLinkState.selectedIndex);
-              });
-              return;
-            }
-            if (e.key === 'ArrowUp') {
-              e.preventDefault();
-              state.wikiLinkState.selectedIndex = (state.wikiLinkState.selectedIndex - 1 + count) % count;
-              el.noteLinkPopup.querySelectorAll('.wiki-link-item').forEach((btn, i) => {
-                btn.classList.toggle('active', i === state.wikiLinkState.selectedIndex);
-              });
-              return;
-            }
-            if (e.key === 'Enter') {
-              e.preventDefault();
-              const picked = state.wikiLinkState.candidates[state.wikiLinkState.selectedIndex];
-              if (picked) applyWikiLinkSelection(picked);
-              return;
-            }
+            closeWikiLinkPopup();
+          } else if (e.key === 'Enter' && state.wikiLinkState.candidates.length > 0) {
+            e.preventDefault();
+            applyWikiLinkCandidate(state.wikiLinkState.candidates[0]);
           }
         }
       };
 
-      el.noteRichEditor.onpaste = async (e) => {
-        const imageItems = Array.from(e.clipboardData?.items || []).filter(i => i.type.startsWith('image/'));
-        if (imageItems.length) {
-          e.preventDefault();
-          for (const item of imageItems) {
-            const file = item.getAsFile();
-            if (file) {
-              const optimizedUrl = await optimizeImageFileToDataUrl(file);
-              insertHtmlIntoActiveEditor(`<p><img src="${optimizedUrl}" alt="スクリーンショット"></p>`);
-            }
-          }
-        } else {
-          setTimeout(() => handleEditorContentChange(true), 0);
+      el.noteLinkPopup.onclick = (e) => {
+        const item = e.target.closest('[data-wiki-idx]');
+        if (item && state.wikiLinkState) {
+          const idx = Number(item.dataset.wikiIdx);
+          const target = state.wikiLinkState.candidates[idx];
+          if (target) applyWikiLinkCandidate(target);
         }
       };
 
       el.noteRichEditor.onclick = async (e) => {
-        const internalLink = e.target.closest('a.loosenote-internal-link, a[data-note-link-id]');
-        if (internalLink) {
-          e.preventDefault();
-          e.stopPropagation();
-          const targetId = internalLink.dataset.noteLinkId || (internalLink.getAttribute('href') || '').replace(/^#note-id:/, '');
-          if (targetId) await navigateToLinkedNote(targetId, true);
-          return;
-        }
-
         const editCardBtn = e.target.closest('.loosenote-edit-link-card-btn');
         if (editCardBtn) {
           e.preventDefault();
           e.stopPropagation();
-          const cardEl = editCardBtn.closest('.loosenote-link-card');
-          if (!cardEl) return;
-
-          const updated = await showLinkCardModal({
-            modalTitle: 'リンク運用カードの編集',
+          const card = editCardBtn.closest('.loosenote-link-card');
+          if (!card) return;
+          const res = await showLinkCardModal({
+            modalTitle: 'リンク運用カードを編集',
             confirmLabel: '更新する',
-            initialFilename: cardEl.dataset.filename || '',
-            initialUrl: cardEl.dataset.url || '',
-            initialMemo: cardEl.dataset.memo || ''
+            initialFilename: card.dataset.filename || '',
+            initialUrl: card.dataset.url || '',
+            initialMemo: card.dataset.memo || ''
           });
-          if (!updated) return;
-
-          const tempWrap = document.createElement('div');
-          tempWrap.innerHTML = buildLinkOperationCardHtml({
-            filename: updated.filename,
-            fileSizeText: cardEl.dataset.filesize || '',
-            url: updated.url,
-            memo: updated.memo
-          });
-          const newCardEl = tempWrap.querySelector('.loosenote-link-card');
-          if (newCardEl) {
-            cardEl.replaceWith(newCardEl);
+          if (res) {
+            const wrap = document.createElement('div');
+            wrap.innerHTML = buildLinkOperationCardHtml({
+              filename: res.filename,
+              fileSizeText: card.dataset.filesize || '',
+              url: res.url,
+              memo: res.memo
+            });
+            const newCard = wrap.querySelector('.loosenote-link-card');
+            if (newCard) card.replaceWith(newCard);
             handleEditorContentChange(true);
-            showToast('リンク運用カードを更新しました', 'success');
           }
           return;
         }
 
-        const downloadAnchor = e.target.closest('a[download]');
-        if (downloadAnchor) {
-          const href = downloadAnchor.getAttribute('href') || '';
-          if (href.startsWith('data:')) {
-            e.preventDefault();
-            const blob = await dataUrlToBlob(href);
-            const blobUrl = URL.createObjectURL(blob);
-            const tempLink = document.createElement('a');
-            tempLink.href = blobUrl;
-            tempLink.download = downloadAnchor.getAttribute('download') || 'attachment';
-            tempLink.click();
-            setTimeout(() => URL.revokeObjectURL(blobUrl), 2000);
-            return;
-          }
+        const internalLink = e.target.closest('a.loosenote-internal-link');
+        if (internalLink) {
+          e.preventDefault();
+          const targetId = internalLink.dataset.noteLinkId || (internalLink.getAttribute('href') || '').replace(/^#note-id:/, '');
+          if (targetId) await navigateToInternalNote(targetId);
+          return;
         }
 
-        const externalAnchor = e.target.closest('a[href]');
-        if (externalAnchor) {
-          const href = externalAnchor.getAttribute('href') || '';
+        const extLink = e.target.closest('a[href]');
+        if (extLink && !extLink.hasAttribute('download')) {
+          const href = extLink.getAttribute('href') || '';
           if (/^https?:\/\//i.test(href)) {
             e.preventDefault();
             window.open(href, '_blank', 'noopener,noreferrer');
@@ -5706,225 +5814,205 @@ ${contentHtml || '<p></p>'}
           hideImageToolbar();
           state.activeEditorImg = e.target;
           e.target.classList.add('selected-editor-img');
-          const r = e.target.getBoundingClientRect();
-          el.imageFloatingToolbar.style.left = `${Math.max(12, Math.min(window.innerWidth - 260, r.left))}px`;
-          el.imageFloatingToolbar.style.top = `${Math.max(12, r.top - 48)}px`;
+          const rect = e.target.getBoundingClientRect();
+          const top = Math.max(12, Math.min(window.innerHeight - 52, rect.top - 44));
+          const left = Math.max(12, Math.min(window.innerWidth - 260, rect.left));
+          el.imageFloatingToolbar.style.top = `${top}px`;
+          el.imageFloatingToolbar.style.left = `${left}px`;
           el.imageFloatingToolbar.classList.remove('hidden');
         } else {
           hideImageToolbar();
         }
       };
 
+      el.imageFloatingToolbar.onclick = (e) => {
+        const sizeBtn = e.target.closest('[data-img-size]');
+        if (sizeBtn && state.activeEditorImg) {
+          const sz = sizeBtn.dataset.imgSize;
+          state.activeEditorImg.style.width = sz;
+          state.activeEditorImg.style.maxWidth = '100%';
+          handleEditorContentChange(true);
+          return;
+        }
+        if (e.target.closest('#img-lightbox-open-btn') && state.activeEditorImg) {
+          openImageLightbox(state.activeEditorImg.src);
+        }
+      };
+
+      el.imgLightboxCloseBtn.onclick = () => closeImageLightbox();
+      el.imageLightboxModal.onclick = (e) => {
+        if (e.target === el.imageLightboxModal) closeImageLightbox();
+      };
+
+      el.noteRichEditor.onpaste = async (e) => {
+        const items = Array.from(e.clipboardData?.items || []);
+        const files = items.filter(it => it.kind === 'file').map(it => it.getAsFile()).filter(Boolean);
+        if (files.length) {
+          e.preventDefault();
+          await handleDroppedOrSelectedFiles(files, true);
+        } else {
+          setTimeout(() => handleEditorContentChange(true), 0);
+        }
+      };
+
+      el.editorPane.addEventListener('dragover', (e) => {
+        if (!e.dataTransfer?.types?.includes('Files')) return;
+        e.preventDefault();
+        e.stopPropagation();
+        if (state.activeNoteId) {
+          el.editorPane.classList.add('editor-drop-active');
+          el.editorDropBanner.classList.remove('hidden');
+          el.globalDropOverlay.classList.add('hidden');
+        }
+      });
+
+      el.editorPane.addEventListener('dragleave', (e) => {
+        if (!el.editorPane.contains(e.relatedTarget)) {
+          el.editorPane.classList.remove('editor-drop-active');
+          el.editorDropBanner.classList.add('hidden');
+        }
+      });
+
+      el.editorPane.addEventListener('drop', async (e) => {
+        if (!e.dataTransfer?.files?.length) return;
+        e.preventDefault();
+        e.stopPropagation();
+        el.editorPane.classList.remove('editor-drop-active');
+        el.editorDropBanner.classList.add('hidden');
+        el.globalDropOverlay.classList.add('hidden');
+
+        if (state.activeNoteId) {
+          placeEditorCaretAtDropPoint(e.clientX, e.clientY);
+          await handleDroppedOrSelectedFiles(e.dataTransfer.files, true);
+        } else {
+          await handleDroppedOrSelectedFiles(e.dataTransfer.files, false);
+        }
+      });
+
+      document.addEventListener('dragover', (e) => {
+        if (!e.dataTransfer?.types?.includes('Files')) return;
+        e.preventDefault();
+        if (!el.editorPane.contains(e.target)) {
+          el.globalDropOverlay.classList.remove('hidden');
+        }
+      });
+
+      document.addEventListener('dragleave', (e) => {
+        if (!e.relatedTarget) {
+          el.globalDropOverlay.classList.add('hidden');
+          el.editorPane.classList.remove('editor-drop-active');
+          el.editorDropBanner.classList.add('hidden');
+        }
+      });
+
+      document.addEventListener('drop', async (e) => {
+        if (!e.dataTransfer?.files?.length) return;
+        e.preventDefault();
+        el.globalDropOverlay.classList.add('hidden');
+        el.editorPane.classList.remove('editor-drop-active');
+        el.editorDropBanner.classList.add('hidden');
+        await handleDroppedOrSelectedFiles(e.dataTransfer.files, false);
+      });
+
       document.addEventListener('click', (e) => {
-        if (!el.imageFloatingToolbar.classList.contains('hidden') && !el.imageFloatingToolbar.contains(e.target) && e.target !== state.activeEditorImg) {
+        if (!e.target.closest('#image-floating-toolbar') && e.target.tagName !== 'IMG') {
           hideImageToolbar();
         }
-        if (!el.noteLinkPopup.classList.contains('hidden') && !el.noteLinkPopup.contains(e.target) && !el.noteRichEditor.contains(e.target)) {
+        if (!e.target.closest('#note-link-popup') && !e.target.closest('#note-rich-editor')) {
           closeWikiLinkPopup();
         }
       });
 
-      window.addEventListener('popstate', () => {
-        if (window.innerWidth < 768 && el.editorPane.classList.contains('mobile-open')) {
+      document.addEventListener('keydown', async (e) => {
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+          e.preventDefault();
+          await showQuickJumpModal();
+          return;
+        }
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+          e.preventDefault();
+          await flushPendingAutoSave();
+          showToast('保存しました', 'success', 1800);
+          return;
+        }
+        if (e.key === 'Escape') {
+          if (!el.imageLightboxModal.classList.contains('hidden')) {
+            closeImageLightbox();
+          }
+          hideImageToolbar();
+          closeWikiLinkPopup();
+        }
+      });
+
+      window.addEventListener('popstate', async () => {
+        if (state.mobileHistoryPushed) {
+          await flushPendingAutoSave();
+          hideImageToolbar();
+          closeWikiLinkPopup();
           toggleMobileEditor(false, true);
-        }
-      });
-
-      const editorScrollEl = document.querySelector('.editor-scroll');
-      if (editorScrollEl) {
-        editorScrollEl.addEventListener('scroll', () => {
-          if (!el.imageFloatingToolbar.classList.contains('hidden')) hideImageToolbar();
-          if (!el.noteLinkPopup.classList.contains('hidden')) closeWikiLinkPopup();
-        }, { passive: true });
-      }
-
-      el.imageFloatingToolbar.onclick = (e) => {
-        const sizeBtn = e.target.closest('[data-img-size]');
-        if (sizeBtn && state.activeEditorImg) {
-          state.activeEditorImg.style.width = sizeBtn.dataset.imgSize;
-          state.activeEditorImg.style.maxWidth = '100%';
-          handleEditorContentChange(true);
-        } else if (e.target.closest('#img-lightbox-open-btn') && state.activeEditorImg) {
-          el.imgLightboxPreview.src = state.activeEditorImg.src;
-          el.imageLightboxModal.classList.remove('hidden');
-        }
-      };
-      el.imgLightboxCloseBtn.onclick = () => el.imageLightboxModal.classList.add('hidden');
-      el.imageLightboxModal.onclick = (e) => { if (e.target === el.imageLightboxModal) el.imageLightboxModal.classList.add('hidden'); };
-
-      el.embedMediaBtn.onclick = () => el.embedMediaInput.click();
-      el.embedMediaInput.onchange = (e) => { handleDroppedOrSelectedFiles(e.target.files, true); e.target.value = ''; };
-      el.importEnexBtn.onclick = () => el.enexFileInput.click();
-      el.enexFileInput.onchange = (e) => { handleDroppedOrSelectedFiles(e.target.files, false); e.target.value = ''; };
-
-      let dragCounter = 0;
-      const canEmbedIntoActiveNote = () => {
-        if (!state.activeNoteId) return false;
-        const activeNote = state.notes.find(n => n.id === state.activeNoteId);
-        return Boolean(activeNote && !activeNote.trashed);
-      };
-      const setEditorDropHighlight = (show) => {
-        el.editorPane.classList.toggle('editor-drop-active', show);
-        el.editorDropBanner.classList.toggle('hidden', !show);
-      };
-      const clearAllDragOverlays = () => {
-        dragCounter = 0;
-        el.globalDropOverlay.classList.add('hidden');
-        setEditorDropHighlight(false);
-      };
-
-      window.addEventListener('dragenter', (e) => {
-        if (!e.dataTransfer?.types?.includes('Files')) return;
-        e.preventDefault();
-        dragCounter++;
-        const overEditor = canEmbedIntoActiveNote() && el.editorPane.contains(e.target);
-        if (overEditor) {
-          el.globalDropOverlay.classList.add('hidden');
-          setEditorDropHighlight(true);
-        } else {
-          setEditorDropHighlight(false);
-          el.globalDropOverlay.classList.remove('hidden');
-        }
-      });
-      window.addEventListener('dragover', (e) => {
-        if (!e.dataTransfer?.types?.includes('Files')) return;
-        e.preventDefault();
-        const overEditor = canEmbedIntoActiveNote() && el.editorPane.contains(e.target);
-        if (overEditor) {
-          el.globalDropOverlay.classList.add('hidden');
-          setEditorDropHighlight(true);
-        } else {
-          setEditorDropHighlight(false);
-          el.globalDropOverlay.classList.remove('hidden');
-        }
-      });
-      window.addEventListener('dragleave', (e) => {
-        if (!e.dataTransfer?.types?.includes('Files')) return;
-        if (--dragCounter <= 0) {
-          clearAllDragOverlays();
-        }
-      });
-      window.addEventListener('blur', clearAllDragOverlays);
-      document.addEventListener('mouseleave', clearAllDragOverlays);
-      window.addEventListener('drop', (e) => {
-        if (!e.dataTransfer?.files?.length) return;
-        e.preventDefault();
-        const droppedInEditor = canEmbedIntoActiveNote() && el.editorPane.contains(e.target);
-        clearAllDragOverlays();
-        if (droppedInEditor) {
-          placeEditorCaretAtDropPoint(e.clientX, e.clientY);
-          handleDroppedOrSelectedFiles(e.dataTransfer.files, true);
-        } else {
-          handleDroppedOrSelectedFiles(e.dataTransfer.files, false);
-        }
-      });
-
-      document.addEventListener('visibilitychange', () => {
-        if (document.visibilityState === 'visible' && isGdriveConnected() && !state.isGdriveSyncing) {
-          syncWithGoogleDrive(false);
-        } else if (document.visibilityState === 'hidden') {
-          flushPendingAutoSave();
+          releaseActiveEditorMemory();
+          renderNotesList(false);
         }
       });
 
       window.addEventListener('online', () => {
-        if (isGdriveConnected() && !state.isGdriveSyncing && state.notes.some(n => n.needsSync)) {
-          showToast('オンラインに復帰しました。未同期ノートを自動同期します...', 'info', 2500);
+        updateGdriveStatusUI();
+        if (isGdriveConnected() && state.notes.some(n => n.needsSync)) {
           syncWithGoogleDrive(false);
         }
       });
+
+      window.addEventListener('beforeunload', () => {
+        if (state.saveTimeout && state.pendingSaveNoteId) {
+          flushPendingAutoSave();
+        }
+      });
+
       window.addEventListener('resize', () => {
         if (window.innerWidth >= 768) {
           el.leftSidebar.classList.remove('open');
           el.sidebarBackdrop.classList.add('hidden');
+          document.querySelector('.workspace')?.classList.remove('mobile-editor-open');
           state.mobileHistoryPushed = false;
-        }
-      });
-
-      document.addEventListener('keydown', async (e) => {
-        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
-          e.preventDefault();
-          await flushPendingAutoSave();
-          if (isGdriveConnected() && !state.isGdriveSyncing) {
-            syncWithGoogleDrive(false);
-          }
-          showToast('ノートを保存しました', 'success', 2000);
-        } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
-          if (el.customModal.classList.contains('hidden')) {
-            e.preventDefault();
-            showQuickJumpModal();
-          }
-        } else if (e.key === 'Escape') {
-          if (!el.imageLightboxModal.classList.contains('hidden')) {
-            el.imageLightboxModal.classList.add('hidden');
-          } else if (!el.noteLinkPopup.classList.contains('hidden')) {
-            closeWikiLinkPopup();
-          } else if (!el.imageFloatingToolbar.classList.contains('hidden')) {
-            hideImageToolbar();
-          }
-        }
-      });
-
-      window.addEventListener('beforeunload', (e) => {
-        const hasPendingSave = Boolean(state.saveTimeout);
-        const hasUnsynced = state.notes.some(n => n.needsSync);
-        if (state.isGdriveSyncing || state.isEnexImporting || hasPendingSave || (isGdriveConnected() && hasUnsynced)) {
-          flushPendingAutoSave();
-          e.preventDefault();
-          e.returnValue = '';
         }
       });
     }
 
-    /* ==========================================================================
-       12. アプリ起動シーケンス
-       ========================================================================== */
     async function initApp() {
       setupAppIcons();
-      applyTheme(localStorage.getItem('loosenote-theme') === 'dark');
+      const savedTheme = localStorage.getItem('loosenote-theme');
+      const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+      applyTheme(savedTheme ? savedTheme === 'dark' : prefersDark);
+
       updateSortControlUI();
-      el.iconViewCompact.classList.toggle('hidden', state.isCompactList);
-      el.iconViewCard.classList.toggle('hidden', !state.isCompactList);
+      updateCompactToggleUI();
+      bindAllEvents();
 
       await requestPersistentStorageProtection();
+      const loaded = await loadStateFromDB();
+      state.notes = loaded.notes;
+      state.notebooks = loaded.notebooks;
 
-      const saved = await loadStateFromDB();
-      state.notes = saved.notes || [];
-      state.notebooks = saved.notebooks || [];
-
-      if (!saved.initialized && !state.notes.length) {
-        const built = await buildNewSeparatedNoteObject({
-          title: 'LooseNote へようこそ！（Google Drive 直接連携・高速軽量版）',
-          stack: 'はじめに',
-          notebook: '使い方ガイド',
-          tags: ['ガイド', 'クラウド同期'],
-          content: `<h2>1ノート ＝ 1つの独立したHTMLファイル</h2>
-            <p>LooseNoteは、ノートを独自のブラックボックスDBに閉じ込めず、<strong>1ノート＝1つの自己完結型HTMLファイル</strong>としてあなたのGoogleドライブに直接保存します。</p>
-            <ul>
-              <li><strong>⚡ 1万件超でもサクサク動作：</strong>起動時は軽量インデックスのみを読み込み、選択したノートの本文だけを瞬時に取得・自動LRUキャッシュ管理します。</li>
-              <li><strong>☁️ クラウド直接同期：</strong>左上の「Googleドライブに接続」からログインすると、パソコン・iPhone・Androidから同じノートへ即座にアクセスできます。</li>
-              <li><strong>🔗 ノート間リンク＆クイックジャンプ：</strong>本文で <code>[[</code> と入力すると別ノートへリンクでき、<code>Ctrl+K</code>（Macは <code>Cmd+K</code>）で瞬時にジャンプできます。</li>
-            </ul>`
+      if (!loaded.initialized && state.notes.length === 0) {
+        const welcome = await buildNewSeparatedNoteObject({
+          title: 'LooseNote へようこそ！',
+          content: '<p>LooseNote は、PC Chrome と Android Chrome から同じ Googleドライブ フォルダへ直接同期できる軽量ノートアプリです。</p><ul><li>画面に画像・PDF・Evernote（.enex）をドラッグ＆ドロップで取り込めます</li><li>「[[」と入力すると他のノートへのリンクを素早く挿入できます</li></ul>',
+          tags: ['ガイド']
         });
-        state.notes = [built.meta];
-        state.notebooks = [{ name: '使い方ガイド', stack: 'はじめに' }];
-        state.activeNoteId = built.meta.id;
-        state.activeNoteContentId = built.meta.id;
-        state.activeNoteContent = built.content;
-        await saveNoteMetaAndContentToDB(built.meta, built.content);
-        await saveAllMetaStateToDB();
-      } else {
-        enforceThumbMemoryBudget();
-        syncNotebooksFromNotes();
-        if (!isMobileViewport()) {
-          state.activeNoteId = getFilteredAndSortedNotes()[0]?.id || null;
-          if (state.activeNoteId) {
-            await ensureActiveNoteContentLoaded(state.activeNoteId);
-          }
+        state.notes.push(welcome.meta);
+        await saveNoteMetaAndContentToDB(welcome.meta, welcome.content);
+      }
+
+      syncNotebooksFromNotes();
+
+      if (!isMobileViewport()) {
+        const firstNote = getFilteredAndSortedNotes()[0];
+        if (firstNote) {
+          state.activeNoteId = firstNote.id;
+          await ensureActiveNoteContentLoaded(firstNote.id);
         }
       }
 
-      bindAllEvents();
       renderAll();
 
       if (state.gdriveClientId) {
@@ -5932,7 +6020,7 @@ ${contentHtml || '<p></p>'}
       }
     }
 
-    initApp();
+    window.onload = initApp;
   </script>
 </body>
 </html>
