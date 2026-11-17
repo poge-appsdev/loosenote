@@ -1277,6 +1277,7 @@
       gdriveTokenExpiry: 0,
       gdriveRootFolderId: null,
       gdriveFolderCache: new Map(),
+      gdriveFolderPending: new Map(),
       gdriveRateLimitCooldownUntil: 0,
       isGdriveSyncing: false,
       abortSyncRequested: false,
@@ -2758,7 +2759,7 @@ ${contentHtml || '<p></p>'}
 
       const safeName = escapeDriveQueryStr(folderName);
       const q = `'${parentId}' in parents and name = '${safeName}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
-      const searchUrl = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id,name)&pageSize=10`;
+      const searchUrl = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id,name)&orderBy=createdTime&pageSize=10`;
       const searchRes = await gdriveFetch(searchUrl);
       const searchData = await searchRes.json();
 
@@ -2771,22 +2772,63 @@ ${contentHtml || '<p></p>'}
     }
 
     async function getOrCreateDriveFolder(folderName, parentId = 'root') {
-      const existingId = await findExistingDriveFolder(folderName, parentId);
-      if (existingId) return existingId;
-
       const cacheKey = `${parentId}/${folderName}`;
-      const createRes = await gdriveFetch('https://www.googleapis.com/drive/v3/files?fields=id', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: folderName,
-          mimeType: 'application/vnd.google-apps.folder',
-          parents: [parentId]
-        })
-      });
-      const created = await createRes.json();
-      state.gdriveFolderCache.set(cacheKey, created.id);
-      return created.id;
+      if (state.gdriveFolderCache.has(cacheKey)) return state.gdriveFolderCache.get(cacheKey);
+      if (state.gdriveFolderPending.has(cacheKey)) return await state.gdriveFolderPending.get(cacheKey);
+
+      const taskPromise = (async () => {
+        try {
+          const existingId = await findExistingDriveFolder(folderName, parentId);
+          if (existingId) return existingId;
+
+          const createRes = await gdriveFetch('https://www.googleapis.com/drive/v3/files?fields=id', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              name: folderName,
+              mimeType: 'application/vnd.google-apps.folder',
+              parents: [parentId]
+            })
+          });
+          const created = await createRes.json();
+          state.gdriveFolderCache.set(cacheKey, created.id);
+          return created.id;
+        } finally {
+          state.gdriveFolderPending.delete(cacheKey);
+        }
+      })();
+
+      state.gdriveFolderPending.set(cacheKey, taskPromise);
+      return await taskPromise;
+    }
+
+    async function mergeDriveFolderIntoTarget(sourceFolderId, targetFolderId) {
+      if (!sourceFolderId || !targetFolderId || sourceFolderId === targetFolderId) return;
+      const children = await listDriveChildren(sourceFolderId);
+      for (const child of children) {
+        if (child.mimeType === 'application/vnd.google-apps.folder') {
+          const existingSubId = await findExistingDriveFolder(child.name, targetFolderId);
+          if (existingSubId) {
+            await mergeDriveFolderIntoTarget(child.id, existingSubId);
+          } else {
+            await gdriveFetch(
+              `https://www.googleapis.com/drive/v3/files/${child.id}?fields=id&addParents=${encodeURIComponent(targetFolderId)}&removeParents=${encodeURIComponent(sourceFolderId)}`,
+              { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: '{}' }
+            );
+          }
+        } else {
+          await gdriveFetch(
+            `https://www.googleapis.com/drive/v3/files/${child.id}?fields=id&addParents=${encodeURIComponent(targetFolderId)}&removeParents=${encodeURIComponent(sourceFolderId)}`,
+            { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: '{}' }
+          );
+          const matchedNote = state.notes.find(n => n.gdriveFileId === child.id);
+          if (matchedNote) matchedNote.gdriveParentId = targetFolderId;
+        }
+      }
+      const remain = await listDriveChildren(sourceFolderId);
+      if (remain.length === 0) {
+        await gdriveFetch(`https://www.googleapis.com/drive/v3/files/${sourceFolderId}`, { method: 'DELETE' });
+      }
     }
 
     async function moveOrRenameDriveNotebookFolder(oldStack, oldNotebook, newStack, newNotebook) {
@@ -2815,7 +2857,14 @@ ${contentHtml || '<p></p>'}
         if (oldParentId === newParentId && safeOldNb === safeNewNb) return;
 
         const conflictFolderId = await findExistingDriveFolder(safeNewNb, newParentId);
-        if (!conflictFolderId) {
+        if (conflictFolderId && conflictFolderId !== oldFolderId) {
+          await mergeDriveFolderIntoTarget(oldFolderId, conflictFolderId);
+          for (const n of state.notes) {
+            if (n.notebook === newNotebook && (n.stack || '') === (newStack || '')) {
+              n.gdriveParentId = conflictFolderId;
+            }
+          }
+        } else {
           let moveQuery = '';
           if (oldParentId !== newParentId) {
             moveQuery = `&addParents=${encodeURIComponent(newParentId)}&removeParents=${encodeURIComponent(oldParentId)}`;
@@ -2828,37 +2877,50 @@ ${contentHtml || '<p></p>'}
               body: JSON.stringify({ name: safeNewNb })
             }
           );
-          state.gdriveFolderCache.clear();
+          for (const n of state.notes) {
+            if (n.notebook === newNotebook && (n.stack || '') === (newStack || '')) {
+              n.gdriveParentId = oldFolderId;
+            }
+          }
         }
+        state.gdriveFolderCache.clear();
       } catch (err) {
         console.warn('Googleドライブフォルダの直接移動・リネームをスキップ:', err);
       }
     }
 
-    async function renameDriveStackFolder(oldStackName, newStackName) {
-      if (!isGdriveConnected() || !oldStackName || !newStackName || oldStackName === newStackName) return;
+    async function renameOrUngroupDriveStackFolder(oldStackName, newStackName) {
+      if (!isGdriveConnected() || !oldStackName || oldStackName === newStackName) return;
       try {
         if (!state.gdriveRootFolderId) {
           state.gdriveRootFolderId = await getOrCreateDriveFolder(state.gdriveFolderName || 'LooseNote_Data', 'root');
         }
         const safeOld = sanitizeFilename(oldStackName);
-        const safeNew = sanitizeFilename(newStackName);
-        if (safeOld === safeNew) return;
-
         const oldStackId = await findExistingDriveFolder(safeOld, state.gdriveRootFolderId);
         if (!oldStackId) return;
 
+        if (!newStackName) {
+          await mergeDriveFolderIntoTarget(oldStackId, state.gdriveRootFolderId);
+          state.gdriveFolderCache.clear();
+          return;
+        }
+
+        const safeNew = sanitizeFilename(newStackName);
+        if (safeOld === safeNew) return;
+
         const conflictId = await findExistingDriveFolder(safeNew, state.gdriveRootFolderId);
-        if (!conflictId) {
+        if (conflictId && conflictId !== oldStackId) {
+          await mergeDriveFolderIntoTarget(oldStackId, conflictId);
+        } else {
           await gdriveFetch(`https://www.googleapis.com/drive/v3/files/${oldStackId}?fields=id`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ name: safeNew })
           });
-          state.gdriveFolderCache.clear();
         }
+        state.gdriveFolderCache.clear();
       } catch (err) {
-        console.warn('Googleドライブスタックフォルダの直接リネームをスキップ:', err);
+        console.warn('Googleドライブスタックフォルダの直接変更をスキップ:', err);
       }
     }
 
@@ -2899,11 +2961,43 @@ ${contentHtml || '<p></p>'}
         console.warn('空フォルダの自動クリーンアップをスキップ:', err);
       }
     }
+    async function scanDriveHtmlFilesRecursively(folderId, folderParts = [], emptyFoldersOut = null) {
+      const children = await listDriveChildren(folderId);
+      const htmlFiles = [];
+      let childFolderCount = 0;
+      for (const item of children) {
+        if (item.mimeType === 'application/vnd.google-apps.folder') {
+          childFolderCount++;
+          state.gdriveFolderCache.set(`${folderId}/${item.name}`, item.id);
+          htmlFiles.push(...await scanDriveHtmlFilesRecursively(item.id, [...folderParts, item.name], emptyFoldersOut));
+        } else if (/\.html?$/i.test(item.name)) {
+          htmlFiles.push({ ...item, parentId: folderId, folderParts });
+        }
+      }
+      if (emptyFoldersOut && folderParts.length > 0 && htmlFiles.length === 0 && childFolderCount === 0) {
+        emptyFoldersOut.push({ id: folderId, parentId: folderId, name: folderParts[folderParts.length - 1], folderParts });
+      }
+      return htmlFiles;
+    }
+
+    function deriveLocationFromFolderParts(folderParts = []) {
+      if (folderParts[0] === '_Trash') {
+        return { trashed: true, stack: '', notebook: '' };
+      }
+      if (folderParts.length >= 2) {
+        return {
+          trashed: false,
+          stack: folderParts[folderParts.length - 2],
+          notebook: folderParts[folderParts.length - 1]
+        };
+      }
+      if (folderParts.length === 1) {
+        return { trashed: false, stack: '', notebook: folderParts[0] };
+      }
+      return { trashed: false, stack: '', notebook: '' };
+    }
 
     async function resolveTargetDriveParentId(note) {
-      if (!state.gdriveRootFolderId) {
-        state.gdriveRootFolderId = await getOrCreateDriveFolder(state.gdriveFolderName || 'LooseNote_Data', 'root');
-      }
       let currentParent = state.gdriveRootFolderId;
       if (note.trashed) {
         return await getOrCreateDriveFolder('_Trash', currentParent);
@@ -3109,20 +3203,6 @@ ${contentHtml || '<p></p>'}
       return items;
     }
 
-    async function scanDriveHtmlFilesRecursively(folderId, folderParts = []) {
-      const children = await listDriveChildren(folderId);
-      const htmlFiles = [];
-      for (const item of children) {
-        if (item.mimeType === 'application/vnd.google-apps.folder') {
-          state.gdriveFolderCache.set(`${folderId}/${item.name}`, item.id);
-          htmlFiles.push(...await scanDriveHtmlFilesRecursively(item.id, [...folderParts, item.name]));
-        } else if (/\.html?$/i.test(item.name)) {
-          htmlFiles.push({ ...item, parentId: folderId, folderParts });
-        }
-      }
-      return htmlFiles;
-    }
-
     async function runWithConcurrencyPool(items, workerFn, maxConcurrency = SYNC_CONCURRENCY_LIMIT) {
       if (!items.length) return;
       let cursor = 0;
@@ -3305,6 +3385,7 @@ ${contentHtml || '<p></p>'}
 
           const savedTokenInfo = await getSavedDriveChangeToken();
           let targetRemoteFiles = [];
+          let detectedEmptyFolders = [];
           let nextTokenToSave = '';
           let runFullScan = true;
 
@@ -3336,7 +3417,7 @@ ${contentHtml || '<p></p>'}
           if (runFullScan) {
             setSyncProgressUI(true, 'フォルダ一覧をフルスキャン中...', 4);
             nextTokenToSave = await fetchLatestDriveStartPageToken();
-            const remoteFiles = await scanDriveHtmlFilesRecursively(state.gdriveRootFolderId);
+            const remoteFiles = await scanDriveHtmlFilesRecursively(state.gdriveRootFolderId, [], detectedEmptyFolders);
             const remoteById = new Map(remoteFiles.map(f => [f.id, f]));
 
             state.notes = state.notes.filter(n => {
@@ -3397,6 +3478,26 @@ ${contentHtml || '<p></p>'}
                 const hasLocalDirty = Boolean(localMatch.needsSync || localMod - knownRemoteMod > 3000);
                 const hasRemoteNewer = Boolean(remoteMod - knownRemoteMod > 3000);
 
+                if (!hasLocalDirty && Array.isArray(rf.folderParts)) {
+                  const driveLoc = deriveLocationFromFolderParts(rf.folderParts);
+                  const localSafeStack = sanitizeFilename(localMatch.stack || '');
+                  const localSafeNb = sanitizeFilename(localMatch.notebook || '');
+                  const locChangedOnDrive = Boolean(localMatch.trashed) !== driveLoc.trashed
+                    || (localMatch.stack ? localSafeStack : '') !== driveLoc.stack
+                    || (localMatch.notebook ? localSafeNb : '') !== driveLoc.notebook;
+
+                  if (locChangedOnDrive) {
+                    localMatch.trashed = driveLoc.trashed;
+                    if (!driveLoc.trashed) {
+                      if ((localMatch.stack ? localSafeStack : '') !== driveLoc.stack) localMatch.stack = driveLoc.stack;
+                      if ((localMatch.notebook ? localSafeNb : '') !== driveLoc.notebook) localMatch.notebook = driveLoc.notebook;
+                    }
+                    localMatch._searchKey = buildSearchKey(localMatch);
+                    localMatch.metaHtmlDirty = true;
+                    localMatch.needsSync = true;
+                  }
+                }
+
                 if (hasLocalDirty && hasRemoteNewer) {
                   const fileRes = await gdriveFetch(`https://www.googleapis.com/drive/v3/files/${rf.id}?alt=media`, {}, 2, 90000);
                   const htmlText = await fileRes.text();
@@ -3451,6 +3552,12 @@ ${contentHtml || '<p></p>'}
 
           if (!state.abortSyncRequested && !pausedForToken && skippedErrorCount === 0 && nextTokenToSave) {
             await saveDriveChangeToken(nextTokenToSave, state.gdriveRootFolderId);
+          }
+
+          if (runFullScan && detectedEmptyFolders.length > 0 && !state.abortSyncRequested && !pausedForToken) {
+            for (const emptyDir of detectedEmptyFolders) {
+              await cleanupEmptyDriveFolderByPath(emptyDir.folderParts);
+            }
           }
 
           await pruneLruContentCache();
@@ -3950,18 +4057,16 @@ ${contentHtml || '<p></p>'}
 
       if (oldName && (oldName !== newName || oldStack !== newStack) && isGdriveConnected()) {
         await clearDriveChangeToken();
-        await enqueueDriveTask(() => moveOrRenameDriveNotebookFolder(oldStack, oldName, newStack, newName));
-      }
-      if (affectedCount > 0 && isGdriveConnected()) {
-        await syncWithGoogleDrive(false);
-      }
-      if (oldName && (oldName !== newName || oldStack !== newStack) && isGdriveConnected()) {
         await enqueueDriveTask(async () => {
+          await moveOrRenameDriveNotebookFolder(oldStack, oldName, newStack, newName);
           await cleanupEmptyDriveFolderByPath([oldStack, oldName]);
           if (oldStack && oldStack !== newStack) {
             await cleanupEmptyDriveFolderByPath([oldStack]);
           }
         });
+      }
+      if (affectedCount > 0 && isGdriveConnected()) {
+        await syncWithGoogleDrive(false);
       }
     }
 
@@ -4014,13 +4119,15 @@ ${contentHtml || '<p></p>'}
       }
       await saveAllMetaStateToDB();
       renderAll();
-      if (affectedCount > 0 && isGdriveConnected()) {
-        await clearDriveChangeToken();
-        await enqueueDriveTask(() => renameDriveStackFolder(oldStackName, newStackName));
-        await syncWithGoogleDrive(false);
-      }
       if (isGdriveConnected()) {
-        await enqueueDriveTask(() => cleanupEmptyDriveFolderByPath([oldStackName]));
+        await clearDriveChangeToken();
+        await enqueueDriveTask(async () => {
+          await renameOrUngroupDriveStackFolder(oldStackName, newStackName);
+          await cleanupEmptyDriveFolderByPath([oldStackName]);
+        });
+        if (affectedCount > 0) {
+          await syncWithGoogleDrive(false);
+        }
       }
       showToast(
         newStackName
@@ -5519,9 +5626,11 @@ ${contentHtml || '<p></p>'}
         });
         if (!ok) return;
 
+        const affectedPaths = [];
         for (const id of ids) {
           const n = state.notes.find(item => item.id === id);
           if (!n) continue;
+          if (n.stack || n.notebook) affectedPaths.push([n.stack, n.notebook]);
           if (isTrash) {
             await deleteSingleNoteFromDB(id);
             await deleteNoteFromGoogleDrive(n.gdriveFileId);
@@ -5543,7 +5652,14 @@ ${contentHtml || '<p></p>'}
         }
         await saveAllMetaStateToDB();
         renderAll();
-        if (!isTrash && isGdriveConnected()) await syncWithGoogleDrive(false);
+        if (!isTrash && isGdriveConnected()) {
+          await syncWithGoogleDrive(false);
+          for (const p of affectedPaths) {
+            await enqueueDriveTask(() => cleanupEmptyDriveFolderByPath(p));
+          }
+        } else if (isTrash && isGdriveConnected()) {
+          await enqueueDriveTask(() => cleanupEmptyDriveFolderByPath(['_Trash']));
+        }
         showToast(isTrash ? `${ids.length} 件を完全に削除しました` : `${ids.length} 件をゴミ箱へ移動しました`, 'info');
       };
 
@@ -5567,6 +5683,7 @@ ${contentHtml || '<p></p>'}
         closeWikiLinkPopup();
         state.activeNoteId = prevId;
         renderAll();
+        toggleMobileEditor(true);
         await ensureActiveNoteContentLoaded(prevId);
       };
 
@@ -5733,13 +5850,13 @@ ${contentHtml || '<p></p>'}
         checkAndShowWikiLinkPopup();
       };
 
-      el.noteRichEditor.onchange = (e) => {
+      el.noteRichEditor.addEventListener('change', (e) => {
         if (e.target && e.target.matches('input[type="checkbox"]')) {
           if (e.target.checked) e.target.setAttribute('checked', 'checked');
           else e.target.removeAttribute('checked');
           handleEditorContentChange(true);
         }
-      };
+      });
 
       el.noteRichEditor.onkeydown = (e) => {
         if (e.isComposing || e.keyCode === 229) return;
