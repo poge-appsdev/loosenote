@@ -296,7 +296,12 @@
       display: inline-flex;
       align-items: center;
     }
-    .tree-row:hover .hover-action { opacity: 1; }
+    .tree-row:hover .hover-action,
+    .tree-row.active .hover-action { opacity: 1; }
+    .tree-row .hover-action:hover { background: var(--bg-surface); color: var(--text-main); }
+    @media (hover: none) {
+      .tree-row .hover-action { opacity: 0.85; }
+    }
     .sidebar-footer {
       padding: 12px;
       background: var(--bg-sidebar-footer);
@@ -968,6 +973,7 @@
             <div style="display:flex;align-items:center;gap:6px;background:var(--bg-surface);border:1px solid var(--border);border-radius:10px;padding:4px 10px;">
               <svg width="14" height="14" style="color:var(--brand-600);flex-shrink:0;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"></path></svg>
               <select id="note-notebook-select" style="font-size:12px;font-weight:500;color:var(--text-sub);background:transparent;border:none;outline:none;cursor:pointer;max-width:220px;"><option value="">未分類 (インボックス)</option></select>
+              <button type="button" id="edit-current-notebook-inline-btn" class="badge badge-muted hidden" style="cursor:pointer;" title="選択中のノートブック名・スタックを変更">✎変更</button>
               <button type="button" id="quick-new-notebook-inline-btn" class="badge badge-muted" style="cursor:pointer;">+新規</button>
             </div>
             <div style="display:flex;flex-wrap:wrap;align-items:center;gap:10px;font-size:11px;color:var(--text-faint);">
@@ -1135,6 +1141,7 @@
       insertNoteLinkBtn: document.getElementById('insert-note-link-btn'),
       embedMediaInput: document.getElementById('embed-media-input'),
       noteNotebookSelect: document.getElementById('note-notebook-select'),
+      editCurrentNotebookInlineBtn: document.getElementById('edit-current-notebook-inline-btn'),
       quickNewNotebookInlineBtn: document.getElementById('quick-new-notebook-inline-btn'),
       editCreatedBtn: document.getElementById('edit-created-btn'),
       noteCreatedDisplay: document.getElementById('note-created-display'),
@@ -1277,6 +1284,7 @@
     const state = {
       notes: [],
       notebooks: [],
+      customNotebooks: [],
       pinnedCollapsed: true,
       collapsedStacks: new Set(),
       selectedNoteIds: new Set(),
@@ -3236,6 +3244,7 @@
 
       renderNotebookSelectOptions();
       el.noteNotebookSelect.value = meta.notebook || '';
+      el.editCurrentNotebookInlineBtn.classList.toggle('hidden', !meta.notebook);
       el.noteTitleInput.value = meta.title || '';
       renderActiveNoteTags(meta);
       updateEditorHeaderMeta(meta);
@@ -3637,11 +3646,30 @@
        11. サイドバー（スタック・ノートブック・ピン留め・容量表示）
        ========================================================================== */
     function rebuildNotebooksFromNotes() {
-      const set = new Set();
+      const set = new Set(Array.isArray(state.customNotebooks) ? state.customNotebooks : []);
       state.notes.forEach(n => {
         if (!n.trashed && n.notebook) set.add(n.notebook);
       });
       state.notebooks = Array.from(set).sort((a, b) => a.localeCompare(b, 'ja'));
+    }
+
+    async function saveCustomNotebooks() {
+      state.customNotebooks = Array.from(new Set((state.customNotebooks || []).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'ja'));
+      await setAppMeta('custom_notebooks', state.customNotebooks);
+    }
+
+    function getAllStackNames() {
+      const stackSet = new Set();
+      state.notebooks.forEach(nb => {
+        if (nb.endsWith('/')) {
+          const st = nb.slice(0, -1).trim();
+          if (st) stackSet.add(st);
+        } else if (nb.includes('/')) {
+          const st = nb.split('/')[0].trim();
+          if (st) stackSet.add(st);
+        }
+      });
+      return Array.from(stackSet).sort((a, b) => a.localeCompare(b, 'ja'));
     }
 
     function renderSidebar() {
@@ -3686,8 +3714,11 @@
       });
 
       state.notebooks.forEach(nb => {
-        if (nb.includes('/')) {
-          const [stackName] = nb.split('/');
+        if (nb.endsWith('/')) {
+          const stackName = nb.slice(0, -1).trim();
+          if (stackName && !stacks.has(stackName)) stacks.set(stackName, []);
+        } else if (nb.includes('/')) {
+          const stackName = nb.split('/')[0].trim();
           if (!stacks.has(stackName)) stacks.set(stackName, []);
           stacks.get(stackName).push(nb);
         } else {
@@ -3706,22 +3737,32 @@
         const isCollapsed = state.collapsedStacks.has(stackName);
         const totalInStack = children.reduce((sum, c) => sum + (countByNb.get(c) || 0), 0);
         treeHtml += `
-          <div class="tree-row${state.activeFilter === `stack:${stackName}` ? ' active' : ''}" style="cursor:pointer;">
+          <div class="tree-row${state.activeFilter === `stack:${stackName}` ? ' active' : ''}" style="cursor:pointer;gap:4px;">
             <div style="display:flex;align-items:center;gap:4px;flex:1;min-width:0;" data-nb-filter="stack:${escapeHtml(stackName)}">
               <span data-toggle-stack="${escapeHtml(stackName)}" style="padding:2px;color:var(--text-faint);">${isCollapsed ? '▸' : '▾'}</span>
               <span class="truncate">🗂️ ${escapeHtml(stackName)}</span>
             </div>
-            <span style="font-size:11px;color:var(--text-faint);">${totalInStack}</span>
+            <div style="display:flex;align-items:center;gap:3px;flex-shrink:0;">
+              <button type="button" class="hover-action" data-edit-stack="${escapeHtml(stackName)}" title="スタック名を変更" style="font-size:11px;">✎</button>
+              <button type="button" class="hover-action" data-delete-stack="${escapeHtml(stackName)}" title="スタックを解除" style="font-size:11px;">×</button>
+              <span style="font-size:11px;color:var(--text-faint);margin-left:2px;">${totalInStack}</span>
+            </div>
           </div>
         `;
         if (!isCollapsed) {
           children.forEach(fullNb => {
             const shortName = fullNb.split('/').slice(1).join('/');
             treeHtml += `
-              <button type="button" class="tree-row indented${state.activeFilter === `nb:${fullNb}` ? ' active' : ''}" data-nb-filter="nb:${escapeHtml(fullNb)}" style="width:100%;">
-                <span class="truncate">📓 ${escapeHtml(shortName)}</span>
-                <span style="font-size:11px;color:var(--text-faint);">${countByNb.get(fullNb) || 0}</span>
-              </button>
+              <div class="tree-row indented${state.activeFilter === `nb:${fullNb}` ? ' active' : ''}" style="width:100%;cursor:pointer;gap:4px;">
+                <div style="display:flex;align-items:center;flex:1;min-width:0;" data-nb-filter="nb:${escapeHtml(fullNb)}">
+                  <span class="truncate">📓 ${escapeHtml(shortName)}</span>
+                </div>
+                <div style="display:flex;align-items:center;gap:3px;flex-shrink:0;">
+                  <button type="button" class="hover-action" data-edit-nb="${escapeHtml(fullNb)}" title="ノートブック名・スタックを変更" style="font-size:11px;">✎</button>
+                  <button type="button" class="hover-action" data-delete-nb="${escapeHtml(fullNb)}" title="ノートブックを削除" style="font-size:11px;">×</button>
+                  <span style="font-size:11px;color:var(--text-faint);margin-left:2px;">${countByNb.get(fullNb) || 0}</span>
+                </div>
+              </div>
             `;
           });
         }
@@ -3730,10 +3771,16 @@
       topNotebooks.forEach(nb => {
         if (stacks.has(nb)) return;
         treeHtml += `
-          <button type="button" class="tree-row${state.activeFilter === `nb:${nb}` ? ' active' : ''}" data-nb-filter="nb:${escapeHtml(nb)}" style="width:100%;">
-            <span class="truncate">📓 ${escapeHtml(nb)}</span>
-            <span style="font-size:11px;color:var(--text-faint);">${countByNb.get(nb) || 0}</span>
-          </button>
+          <div class="tree-row${state.activeFilter === `nb:${nb}` ? ' active' : ''}" style="width:100%;cursor:pointer;gap:4px;">
+            <div style="display:flex;align-items:center;flex:1;min-width:0;" data-nb-filter="nb:${escapeHtml(nb)}">
+              <span class="truncate">📓 ${escapeHtml(nb)}</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:3px;flex-shrink:0;">
+              <button type="button" class="hover-action" data-edit-nb="${escapeHtml(nb)}" title="ノートブック名・スタックを変更" style="font-size:11px;">✎</button>
+              <button type="button" class="hover-action" data-delete-nb="${escapeHtml(nb)}" title="ノートブックを削除" style="font-size:11px;">×</button>
+              <span style="font-size:11px;color:var(--text-faint);margin-left:2px;">${countByNb.get(nb) || 0}</span>
+            </div>
+          </div>
         `;
       });
 
@@ -3760,6 +3807,30 @@
           closeMobileSidebar();
         });
       });
+      el.sidebarNotebooksTree.querySelectorAll('[data-edit-stack]').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          openEditStackModal(btn.dataset.editStack);
+        });
+      });
+      el.sidebarNotebooksTree.querySelectorAll('[data-delete-stack]').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          deleteStack(btn.dataset.deleteStack);
+        });
+      });
+      el.sidebarNotebooksTree.querySelectorAll('[data-edit-nb]').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          openEditNotebookModal(btn.dataset.editNb);
+        });
+      });
+      el.sidebarNotebooksTree.querySelectorAll('[data-delete-nb]').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          deleteNotebook(btn.dataset.deleteNb);
+        });
+      });
     }
 
     function setActiveFilter(filterKey) {
@@ -3781,8 +3852,9 @@
 
     function renderNotebookSelectOptions() {
       const current = el.noteNotebookSelect.value;
+      const selectableNotebooks = state.notebooks.filter(nb => !nb.endsWith('/'));
       el.noteNotebookSelect.innerHTML = `<option value="">未分類 (インボックス)</option>` +
-        state.notebooks.map(nb => `<option value="${escapeHtml(nb)}">${escapeHtml(nb)}</option>`).join('');
+        selectableNotebooks.map(nb => `<option value="${escapeHtml(nb)}">${escapeHtml(nb)}</option>`).join('');
       el.noteNotebookSelect.value = current;
     }
 
@@ -4020,31 +4092,85 @@
     }
 
     async function openCreateNotebookModal() {
+      const existingStacks = getAllStackNames();
+      const defaultStack = state.activeFilter.startsWith('stack:')
+        ? state.activeFilter.slice(6)
+        : (state.activeFilter.startsWith('nb:') && state.activeFilter.slice(3).includes('/')
+          ? state.activeFilter.slice(3).split('/')[0]
+          : '');
+      const activeMeta = getActiveNoteMeta();
+
       await openCustomModal({
         title: '📁 新しいノートブック / スタックを作成',
-        message: '「親スタック名/ノートブック名」のようにスラッシュ（/）で区切ると階層スタックを作成できます。',
+        message: 'スタック名を指定すると階層グループを作成できます。スラッシュ（/）区切り（例: 仕事/議事録）でも入力できます。',
         bodyHtml: `
-          <label class="field-label">ノートブック名（例: 仕事/議事録 または プライベート）</label>
-          <input type="text" id="modal-nb-name" class="field-input" placeholder="仕事/プロジェクトA">
+          <div style="display:flex;flex-direction:column;gap:10px;">
+            <div>
+              <label class="field-label">スタック名（任意：既存選択または新規入力）</label>
+              <input type="text" id="modal-nb-stack" class="field-input" list="modal-create-stack-list" value="${escapeHtml(defaultStack)}" placeholder="例: 仕事（空欄なら単独ノートブック）">
+              <datalist id="modal-create-stack-list">${existingStacks.map(st => `<option value="${escapeHtml(st)}">`).join('')}</datalist>
+            </div>
+            <div>
+              <label class="field-label">ノートブック名（スタックのみ先に作る場合は空欄可）</label>
+              <input type="text" id="modal-nb-name" class="field-input" placeholder="例: 議事録 または プライベート">
+            </div>
+            ${activeMeta ? `
+              <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-sub);cursor:pointer;margin-top:2px;">
+                <input type="checkbox" id="modal-nb-assign-active" checked>
+                <span>現在開いているノートをこのノートブックへ移動する</span>
+              </label>
+            ` : ''}
+          </div>
         `,
         actions: [
           {
             label: '作成する',
             className: 'btn btn-brand',
-            onClick: (bodyEl) => {
-              const name = bodyEl.querySelector('#modal-nb-name').value.trim().replace(/^\/+|\/+$/g, '');
-              if (!name) { showToast('ノートブック名を入力してください', 'warning'); return false; }
-              if (!state.notebooks.includes(name)) state.notebooks.push(name);
-              state.notebooks.sort((a, b) => a.localeCompare(b, 'ja'));
+            onClick: async (bodyEl) => {
+              const rawStack = bodyEl.querySelector('#modal-nb-stack').value.trim().replace(/^\/+|\/+$/g, '');
+              const rawName = bodyEl.querySelector('#modal-nb-name').value.trim().replace(/^\/+|\/+$/g, '');
+              if (!rawStack && !rawName) {
+                showToast('スタック名またはノートブック名を入力してください', 'warning');
+                return false;
+              }
+
+              let fullPath = '';
+              let isStackOnly = false;
+              if (!rawStack && rawName.includes('/')) {
+                fullPath = rawName.split('/').map(s => s.trim()).filter(Boolean).join('/');
+              } else if (rawStack && rawName) {
+                const cleanStack = rawStack.replace(/\//g, '_');
+                fullPath = `${cleanStack}/${rawName}`;
+              } else if (rawStack && !rawName) {
+                const cleanStack = rawStack.replace(/\//g, '_');
+                fullPath = `${cleanStack}/`;
+                isStackOnly = true;
+              } else {
+                fullPath = rawName;
+              }
+
+              if (!state.customNotebooks.includes(fullPath)) {
+                state.customNotebooks.push(fullPath);
+              }
+              await saveCustomNotebooks();
+              rebuildNotebooksFromNotes();
+
+              const assignCb = bodyEl.querySelector('#modal-nb-assign-active');
               const meta = getActiveNoteMeta();
-              if (meta) {
-                meta.notebook = name;
+              if (!isStackOnly && meta && assignCb && assignCb.checked) {
+                meta.notebook = fullPath;
                 scheduleSaveActiveNote();
               }
+
               renderNotebookSelectOptions();
-              if (meta) el.noteNotebookSelect.value = name;
+              if (meta) {
+                el.noteNotebookSelect.value = meta.notebook || '';
+                el.editCurrentNotebookInlineBtn.classList.toggle('hidden', !meta.notebook);
+              }
               renderSidebar();
-              showToast(`ノートブック「${name}」を作成しました`, 'success');
+              showToast(isStackOnly
+                ? `スタック「${fullPath.slice(0, -1)}」を作成しました`
+                : `ノートブック「${fullPath}」を作成しました`, 'success');
             }
           },
           { label: 'キャンセル', className: 'btn btn-muted', value: 'cancel' }
@@ -4052,14 +4178,260 @@
       });
     }
 
+    async function openEditNotebookModal(targetNotebook) {
+      if (!targetNotebook) return;
+      const parts = targetNotebook.split('/');
+      const currentStack = parts.length > 1 ? parts[0] : '';
+      const currentName = parts.length > 1 ? parts.slice(1).join('/') : targetNotebook;
+      const existingStacks = getAllStackNames();
+
+      await openCustomModal({
+        title: '✎ ノートブック名・スタックの変更',
+        message: `「${targetNotebook}」の名称や所属スタックを変更します（配下の全ノートとGoogleドライブ同期先にも自動反映されます）。`,
+        bodyHtml: `
+          <div style="display:flex;flex-direction:column;gap:10px;">
+            <div>
+              <label class="field-label">所属スタック名（空欄にするとスタックから外れます）</label>
+              <input type="text" id="modal-edit-nb-stack" class="field-input" list="modal-edit-stack-list" value="${escapeHtml(currentStack)}" placeholder="例: 仕事">
+              <datalist id="modal-edit-stack-list">${existingStacks.map(st => `<option value="${escapeHtml(st)}">`).join('')}</datalist>
+            </div>
+            <div>
+              <label class="field-label">ノートブック名</label>
+              <input type="text" id="modal-edit-nb-name" class="field-input" value="${escapeHtml(currentName)}" placeholder="ノートブック名">
+            </div>
+          </div>
+        `,
+        actions: [
+          {
+            label: '変更を保存',
+            className: 'btn btn-brand',
+            onClick: async (bodyEl) => {
+              const newStack = bodyEl.querySelector('#modal-edit-nb-stack').value.trim().replace(/^\/+|\/+$/g, '').replace(/\//g, '_');
+              const newName = bodyEl.querySelector('#modal-edit-nb-name').value.trim().replace(/^\/+|\/+$/g, '');
+              if (!newName) {
+                showToast('ノートブック名を入力してください', 'warning');
+                return false;
+              }
+              const newFullPath = newStack ? `${newStack}/${newName}` : newName;
+              if (newFullPath === targetNotebook) return;
+
+              for (const n of state.notes) {
+                if (n.notebook === targetNotebook) {
+                  n.notebook = newFullPath;
+                  n.updated = new Date().toISOString();
+                  n.syncStatus = 'dirty';
+                  await saveNoteMetaAndBodyToDB(n, null, true).catch(() => {});
+                  if (!n.trashed) enqueueCloudUpload(n.id);
+                }
+              }
+
+              state.customNotebooks = state.customNotebooks.filter(nb => nb !== targetNotebook);
+              if (!state.customNotebooks.includes(newFullPath)) {
+                state.customNotebooks.push(newFullPath);
+              }
+              await saveCustomNotebooks();
+
+              if (state.activeFilter === `nb:${targetNotebook}`) {
+                state.activeFilter = `nb:${newFullPath}`;
+                el.currentViewLabel.textContent = `ノートブック: ${newFullPath}`;
+              }
+
+              rebuildNotebooksFromNotes();
+              renderAll();
+              const activeMeta = getActiveNoteMeta();
+              if (activeMeta) {
+                el.noteNotebookSelect.value = activeMeta.notebook || '';
+                el.editCurrentNotebookInlineBtn.classList.toggle('hidden', !activeMeta.notebook);
+              }
+              showToast(`「${newFullPath}」に変更しました`, 'success');
+            }
+          },
+          { label: 'キャンセル', className: 'btn btn-muted', value: 'cancel' }
+        ]
+      });
+    }
+
+    async function openEditStackModal(stackName) {
+      if (!stackName) return;
+      await openCustomModal({
+        title: '🗂️ スタック名の変更',
+        message: `スタック「${stackName}」の名前を変更すると、配下の全ノートブックも新しいスタック名へ一括更新されます。`,
+        bodyHtml: `
+          <label class="field-label">新しいスタック名</label>
+          <input type="text" id="modal-edit-stack-name" class="field-input" value="${escapeHtml(stackName)}" placeholder="スタック名">
+        `,
+        actions: [
+          {
+            label: '変更を保存',
+            className: 'btn btn-brand',
+            onClick: async (bodyEl) => {
+              const newStack = bodyEl.querySelector('#modal-edit-stack-name').value.trim().replace(/^\/+|\/+$/g, '').replace(/\//g, '_');
+              if (!newStack) {
+                showToast('スタック名を入力してください', 'warning');
+                return false;
+              }
+              if (newStack === stackName) return;
+
+              const replacePrefix = (path) => {
+                if (path === stackName) return newStack;
+                if (path === `${stackName}/`) return `${newStack}/`;
+                if (path.startsWith(`${stackName}/`)) return `${newStack}/${path.slice(stackName.length + 1)}`;
+                return path;
+              };
+
+              for (const n of state.notes) {
+                if (n.notebook === stackName || (n.notebook && n.notebook.startsWith(`${stackName}/`))) {
+                  n.notebook = replacePrefix(n.notebook);
+                  n.updated = new Date().toISOString();
+                  n.syncStatus = 'dirty';
+                  await saveNoteMetaAndBodyToDB(n, null, true).catch(() => {});
+                  if (!n.trashed) enqueueCloudUpload(n.id);
+                }
+              }
+
+              state.customNotebooks = state.customNotebooks.map(replacePrefix);
+              await saveCustomNotebooks();
+
+              if (state.collapsedStacks.has(stackName)) {
+                state.collapsedStacks.delete(stackName);
+                state.collapsedStacks.add(newStack);
+              }
+              if (state.activeFilter === `stack:${stackName}`) {
+                state.activeFilter = `stack:${newStack}`;
+                el.currentViewLabel.textContent = `スタック: ${newStack}`;
+              } else if (state.activeFilter.startsWith(`nb:${stackName}/`)) {
+                const updatedNb = replacePrefix(state.activeFilter.slice(3));
+                state.activeFilter = `nb:${updatedNb}`;
+                el.currentViewLabel.textContent = `ノートブック: ${updatedNb}`;
+              }
+
+              rebuildNotebooksFromNotes();
+              renderAll();
+              const activeMeta = getActiveNoteMeta();
+              if (activeMeta) {
+                el.noteNotebookSelect.value = activeMeta.notebook || '';
+                el.editCurrentNotebookInlineBtn.classList.toggle('hidden', !activeMeta.notebook);
+              }
+              showToast(`スタック名を「${newStack}」に変更しました`, 'success');
+            }
+          },
+          { label: 'キャンセル', className: 'btn btn-muted', value: 'cancel' }
+        ]
+      });
+    }
+
+    async function deleteNotebook(targetNotebook) {
+      if (!targetNotebook) return;
+      const targetNotes = state.notes.filter(n => !n.trashed && n.notebook === targetNotebook);
+      const ok = await openCustomModal({
+        title: '🗑️ ノートブックを削除',
+        message: targetNotes.length > 0
+          ? `ノートブック「${targetNotebook}」を削除しますか？\n（中の ${targetNotes.length} 件のノートは削除されず「未分類」へ移動します）`
+          : `空のノートブック「${targetNotebook}」を削除しますか？`,
+        actions: [
+          { label: '削除する', className: 'btn btn-danger', value: true },
+          { label: 'キャンセル', className: 'btn btn-muted', value: false }
+        ]
+      });
+      if (!ok) return;
+
+      for (const n of state.notes) {
+        if (n.notebook === targetNotebook) {
+          n.notebook = '';
+          n.updated = new Date().toISOString();
+          n.syncStatus = 'dirty';
+          await saveNoteMetaAndBodyToDB(n, null, true).catch(() => {});
+          if (!n.trashed) enqueueCloudUpload(n.id);
+        }
+      }
+
+      state.customNotebooks = state.customNotebooks.filter(nb => nb !== targetNotebook);
+      await saveCustomNotebooks();
+      rebuildNotebooksFromNotes();
+
+      if (state.activeFilter === `nb:${targetNotebook}`) {
+        setActiveFilter('all');
+      } else {
+        renderAll();
+      }
+      const activeMeta = getActiveNoteMeta();
+      if (activeMeta) {
+        el.noteNotebookSelect.value = activeMeta.notebook || '';
+        el.editCurrentNotebookInlineBtn.classList.toggle('hidden', !activeMeta.notebook);
+      }
+      showToast(`ノートブック「${targetNotebook}」を削除しました`, 'info');
+    }
+
+    async function deleteStack(stackName) {
+      if (!stackName) return;
+      const ok = await openCustomModal({
+        title: '🗂️ スタックを解除',
+        message: `スタック「${stackName}」を解除しますか？\n（配下のノートブックやノートは削除されず、トップレベルのノートブックへ移動します）`,
+        actions: [
+          { label: '解除する', className: 'btn btn-danger', value: true },
+          { label: 'キャンセル', className: 'btn btn-muted', value: false }
+        ]
+      });
+      if (!ok) return;
+
+      const unwrapStack = (path) => {
+        if (path === stackName || path === `${stackName}/`) return '';
+        if (path.startsWith(`${stackName}/`)) return path.slice(stackName.length + 1);
+        return path;
+      };
+
+      for (const n of state.notes) {
+        if (n.notebook === stackName || (n.notebook && n.notebook.startsWith(`${stackName}/`))) {
+          n.notebook = unwrapStack(n.notebook);
+          n.updated = new Date().toISOString();
+          n.syncStatus = 'dirty';
+          await saveNoteMetaAndBodyToDB(n, null, true).catch(() => {});
+          if (!n.trashed) enqueueCloudUpload(n.id);
+        }
+      }
+
+      state.customNotebooks = state.customNotebooks.map(unwrapStack).filter(Boolean);
+      await saveCustomNotebooks();
+      state.collapsedStacks.delete(stackName);
+      rebuildNotebooksFromNotes();
+
+      if (state.activeFilter === `stack:${stackName}` || state.activeFilter.startsWith(`nb:${stackName}/`)) {
+        setActiveFilter('all');
+      } else {
+        renderAll();
+      }
+      const activeMeta = getActiveNoteMeta();
+      if (activeMeta) {
+        el.noteNotebookSelect.value = activeMeta.notebook || '';
+        el.editCurrentNotebookInlineBtn.classList.toggle('hidden', !activeMeta.notebook);
+      }
+      showToast(`スタック「${stackName}」を解除しました`, 'info');
+    }
+
     function bindEvents() {
       el.themeToggleBtn.addEventListener('click', () => applyTheme(!document.documentElement.classList.contains('dark')));
       el.openSidebarBtn.addEventListener('click', openMobileSidebar);
       el.closeSidebarBtn.addEventListener('click', closeMobileSidebar);
       el.sidebarBackdrop.addEventListener('click', closeMobileSidebar);
+      el.mobileBackBtn.addEventListener('click', () => {
+        if (state.mobileHistoryPushed) {
+          state.mobileHistoryPushed = false;
+          try { window.history.back(); } catch {}
+        }
+        el.editorPane.classList.remove('mobile-open');
+        document.querySelector('.workspace')?.classList.remove('mobile-editor-open');
+      });
 
-      el.newNoteBtn.addEventListener('click', () => { createBlankNote(''); closeMobileSidebar(); });
-      el.emptyCreateBtn.addEventListener('click', () => createBlankNote(''));
+      window.addEventListener('popstate', () => {
+        if (el.editorPane.classList.contains('mobile-open')) {
+          state.mobileHistoryPushed = false;
+          el.editorPane.classList.remove('mobile-open');
+          document.querySelector('.workspace')?.classList.remove('mobile-editor-open');
+        }
+      });
+
+      el.newNoteBtn.addEventListener('click', () => { closeMobileSidebar(); createBlankNote(); });
+      el.emptyCreateBtn.addEventListener('click', () => createBlankNote());
 
       el.connectGdriveBtn.addEventListener('click', async () => {
         if (!state.gdriveClientId) { openGdriveSettingsModal(); return; }
@@ -4072,7 +4444,10 @@
       });
       el.syncGdriveNowBtn.addEventListener('click', () => syncWithGoogleDrive(false));
       el.gdriveSettingsBtn.addEventListener('click', openGdriveSettingsModal);
-      el.abortSyncBtn.addEventListener('click', () => { state.abortSyncRequested = true; });
+      el.abortSyncBtn.addEventListener('click', () => {
+        state.abortSyncRequested = true;
+        showToast('処理を中断しています...', 'warning');
+      });
 
       document.querySelectorAll('.filter-btn').forEach(btn => {
         btn.addEventListener('click', () => {
@@ -4081,26 +4456,30 @@
         });
       });
 
-      el.togglePinnedListBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
+      el.togglePinnedListBtn.addEventListener('click', () => {
         state.pinnedCollapsed = !state.pinnedCollapsed;
         renderSidebar();
       });
 
       el.createNotebookBtn.addEventListener('click', openCreateNotebookModal);
       el.quickNewNotebookInlineBtn.addEventListener('click', openCreateNotebookModal);
+      el.editCurrentNotebookInlineBtn.addEventListener('click', () => {
+        const meta = getActiveNoteMeta();
+        if (meta && meta.notebook) openEditNotebookModal(meta.notebook);
+      });
 
       el.noteNotebookSelect.addEventListener('change', () => {
         const meta = getActiveNoteMeta();
         if (!meta) return;
         meta.notebook = el.noteNotebookSelect.value;
+        el.editCurrentNotebookInlineBtn.classList.toggle('hidden', !meta.notebook);
         renderSidebar();
         scheduleSaveActiveNote();
       });
 
       el.importEnexBtn.addEventListener('click', () => el.enexFileInput.click());
-      el.enexFileInput.addEventListener('change', async (e) => {
-        await handleImportedFiles(e.target.files);
+      el.enexFileInput.addEventListener('change', (e) => {
+        handleImportedFiles(e.target.files);
         e.target.value = '';
       });
 
@@ -4108,17 +4487,18 @@
         el.clearSearchBtn.classList.toggle('hidden', !el.searchInput.value);
         clearTimeout(state.searchDebounceTimer);
         state.searchDebounceTimer = setTimeout(() => {
+          state.searchDebounceTimer = null;
           state.searchQuery = el.searchInput.value;
           state.renderedListCount = LIST_PAGE_SIZE;
           renderNotesList();
-        }, 120);
+        }, 160);
       });
       el.clearSearchBtn.addEventListener('click', () => {
-        clearPendingSearchDebounce();
+        clearTimeout(state.searchDebounceTimer);
+        state.searchDebounceTimer = null;
         el.searchInput.value = '';
-        el.clearSearchBtn.classList.add('hidden');
         state.searchQuery = '';
-        state.renderedListCount = LIST_PAGE_SIZE;
+        el.clearSearchBtn.classList.add('hidden');
         renderNotesList();
       });
 
@@ -4129,7 +4509,8 @@
       });
 
       el.sortDirBtn.addEventListener('click', () => {
-        setSortOptions(state.sortField, state.sortDir === 'asc' ? 'desc' : 'asc');
+        const nextDir = state.sortDir === 'desc' ? 'asc' : 'desc';
+        setSortOptions(state.sortField, nextDir);
       });
 
       el.toggleCompactListBtn.addEventListener('click', () => {
@@ -4140,37 +4521,117 @@
         renderNotesList();
       });
 
-      const closeMobileEditorView = (fromPopState = false) => {
-        el.editorPane.classList.remove('mobile-open');
-        document.querySelector('.workspace')?.classList.remove('mobile-editor-open');
-        if (!fromPopState && state.mobileHistoryPushed) {
-          state.mobileHistoryPushed = false;
-          try { window.history.back(); } catch {}
-        }
-      };
-
-      el.mobileBackBtn.addEventListener('click', () => {
-        closeMobileEditorView(false);
-      });
-
-      window.addEventListener('popstate', () => {
-        if (state.mobileHistoryPushed) {
-          state.mobileHistoryPushed = false;
-          closeMobileEditorView(true);
+      el.notesListContainer.addEventListener('scroll', () => {
+        const c = el.notesListContainer;
+        if (c.scrollTop + c.clientHeight >= c.scrollHeight - 120) {
+          const total = getFilteredAndSortedNotes().length;
+          if (state.renderedListCount < total) {
+            state.renderedListCount += LIST_PAGE_SIZE;
+            renderNotesList();
+          }
         }
       });
 
-      window.addEventListener('resize', () => {
-        if (!isMobileViewport()) {
-          el.editorPane.classList.remove('mobile-open');
-          document.querySelector('.workspace')?.classList.remove('mobile-editor-open');
-          state.mobileHistoryPushed = false;
+      el.bulkSelectAllCheckbox.addEventListener('change', (e) => {
+        const list = getFilteredAndSortedNotes();
+        if (e.target.checked) list.forEach(n => state.selectedNoteIds.add(n.id));
+        else state.selectedNoteIds.clear();
+        renderNotesList();
+      });
+
+      el.bulkMoveBtn.addEventListener('click', async () => {
+        await openCustomModal({
+          title: `📁 ${state.selectedNoteIds.size}件のノートを一括移動`,
+          bodyHtml: `
+            <label class="field-label">移動先ノートブック（空欄で未分類）</label>
+            <input type="text" id="modal-bulk-nb" class="field-input" list="bulk-nb-datalist" placeholder="例: 仕事/資料">
+            <datalist id="bulk-nb-datalist">${state.notebooks.map(nb => `<option value="${escapeHtml(nb)}">`).join('')}</datalist>
+          `,
+          actions: [
+            {
+              label: '移動する',
+              className: 'btn btn-brand',
+              onClick: async (bodyEl) => {
+                const dest = bodyEl.querySelector('#modal-bulk-nb').value.trim();
+                for (const id of state.selectedNoteIds) {
+                  const m = state.notes.find(n => n.id === id);
+                  if (m) {
+                    m.notebook = dest;
+                    m.updated = new Date().toISOString();
+                    m.syncStatus = 'dirty';
+                    await saveNoteMetaAndBodyToDB(m, null, true);
+                    enqueueCloudUpload(m.id);
+                  }
+                }
+                state.selectedNoteIds.clear();
+                rebuildNotebooksFromNotes();
+                renderAll();
+                showToast('一括移動しました', 'success');
+              }
+            },
+            { label: 'キャンセル', className: 'btn btn-muted', value: 'cancel' }
+          ]
+        });
+      });
+
+      el.bulkTagBtn.addEventListener('click', async () => {
+        await openCustomModal({
+          title: `🏷️ ${state.selectedNoteIds.size}件のノートにタグを一括追加`,
+          bodyHtml: `<input type="text" id="modal-bulk-tag" class="field-input" placeholder="追加するタグ名">`,
+          actions: [
+            {
+              label: '追加する',
+              className: 'btn btn-brand',
+              onClick: async (bodyEl) => {
+                const tag = bodyEl.querySelector('#modal-bulk-tag').value.trim().replace(/^#/, '');
+                if (!tag) return false;
+                for (const id of state.selectedNoteIds) {
+                  const m = state.notes.find(n => n.id === id);
+                  if (m && !(m.tags || []).includes(tag)) {
+                    m.tags = [...(m.tags || []), tag];
+                    m.updated = new Date().toISOString();
+                    m.syncStatus = 'dirty';
+                    await saveNoteMetaAndBodyToDB(m, null, true);
+                    enqueueCloudUpload(m.id);
+                  }
+                }
+                state.selectedNoteIds.clear();
+                renderAll();
+                showToast(`タグ「#${tag}」を追加しました`, 'success');
+              }
+            },
+            { label: 'キャンセル', className: 'btn btn-muted', value: 'cancel' }
+          ]
+        });
+      });
+
+      el.bulkTrashBtn.addEventListener('click', async () => {
+        const ok = await openCustomModal({
+          title: '🗑️ 一括ゴミ箱移動',
+          message: `選択中の ${state.selectedNoteIds.size} 件のノートをゴミ箱へ移動しますか？`,
+          actions: [
+            { label: '移動する', className: 'btn btn-danger', value: true },
+            { label: 'キャンセル', className: 'btn btn-muted', value: false }
+          ]
+        });
+        if (!ok) return;
+        for (const id of state.selectedNoteIds) {
+          const m = state.notes.find(n => n.id === id);
+          if (m) {
+            m.trashed = true;
+            await saveNoteMetaAndBodyToDB(m, null, true);
+            await trashOrDeleteGdriveFile(m.gdriveFileId);
+          }
         }
+        state.selectedNoteIds.clear();
+        rebuildNotebooksFromNotes();
+        renderAll();
+        showToast('ゴミ箱へ移動しました', 'info');
       });
 
       el.navBackNoteBtn.addEventListener('click', () => {
         const prevId = state.noteHistory.pop();
-        if (prevId) selectNote(prevId, false);
+        if (prevId) selectNote(prevId, false, true);
       });
 
       el.pinNoteBtn.addEventListener('click', () => {
@@ -4184,10 +4645,10 @@
       });
 
       el.downloadSingleHtmlBtn.addEventListener('click', async () => {
+        await flushPendingSave();
         const meta = getActiveNoteMeta();
         if (!meta) return;
-        await flushPendingSave();
-        const html = serializeNoteToStandaloneHtml(meta, state.activeNoteContent);
+        const html = serializeNoteToStandaloneHtml(meta, el.noteRichEditor.innerHTML);
         const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
@@ -4201,13 +4662,10 @@
         const meta = getActiveNoteMeta();
         if (!meta) return;
         meta.trashed = true;
-        meta.pinned = false;
-        meta.updated = new Date().toISOString();
-        state.pendingSaveNoteId = meta.id;
-        await flushPendingSave();
-        if (meta.gdriveFileId) await trashOrDeleteGdriveFile(meta.gdriveFileId);
-        renderSidebar();
-        renderNotesList();
+        await saveNoteMetaAndBodyToDB(meta, null, true);
+        await trashOrDeleteGdriveFile(meta.gdriveFileId);
+        rebuildNotebooksFromNotes();
+        renderAll();
         updatePinAndTrashUI(meta);
         showToast('ノートをゴミ箱へ移動しました', 'info');
       });
@@ -4217,31 +4675,26 @@
         if (!meta) return;
         meta.trashed = false;
         meta.syncStatus = 'dirty';
-        try {
-          await saveNoteMetaAndBodyToDB(meta, null, true);
-        } catch (err) {
-          console.warn('復元メタデータ保存エラー:', err);
-        }
+        await saveNoteMetaAndBodyToDB(meta, null, true);
+        rebuildNotebooksFromNotes();
+        renderAll();
         updatePinAndTrashUI(meta);
-        renderSidebar();
-        renderNotesList();
         enqueueCloudUpload(meta.id);
-        showToast('ノートを元の場所へ復元しました', 'success');
+        showToast('ノートを復元しました', 'success');
       });
 
       el.permanentDeleteNoteBtn.addEventListener('click', async () => {
         const meta = getActiveNoteMeta();
         if (!meta) return;
         const ok = await openCustomModal({
-          title: '🔥 ノートを完全に削除',
-          message: `「${meta.title || '無題のノート'}」を完全に削除します。この操作は元に戻せません。`,
+          title: '🔥 完全削除の確認',
+          message: `「${meta.title || '無題のノート'}」を完全に削除します。この操作は取り消せません。`,
           actions: [
-            { label: '完全に削除する', className: 'btn btn-danger', value: true },
+            { label: '完全に削除', className: 'btn btn-danger', value: true },
             { label: 'キャンセル', className: 'btn btn-muted', value: false }
           ]
         });
         if (!ok) return;
-        if (meta.gdriveFileId) await trashOrDeleteGdriveFile(meta.gdriveFileId);
         await deleteNoteFromDB(meta.id);
         state.notes = state.notes.filter(n => n.id !== meta.id);
         state.activeNoteId = null;
@@ -4256,213 +4709,41 @@
         if (trashed.length === 0) return;
         const ok = await openCustomModal({
           title: '🗑️ ゴミ箱を空にする',
-          message: `ゴミ箱内の ${trashed.length} 件のノートを完全に削除します。よろしいですか？`,
+          message: `ゴミ箱内の ${trashed.length} 件のノートをすべて完全削除しますか？`,
           actions: [
-            { label: 'すべて完全削除', className: 'btn btn-danger', value: true },
+            { label: 'すべて削除', className: 'btn btn-danger', value: true },
             { label: 'キャンセル', className: 'btn btn-muted', value: false }
           ]
         });
         if (!ok) return;
-        for (const t of trashed) {
-          if (t.gdriveFileId) await trashOrDeleteGdriveFile(t.gdriveFileId);
-          await deleteNoteFromDB(t.id);
-        }
+        for (const n of trashed) await deleteNoteFromDB(n.id);
         state.notes = state.notes.filter(n => !n.trashed);
-        if (state.activeNoteId && trashed.some(t => t.id === state.activeNoteId)) {
+        if (state.activeNoteId && !state.notes.some(n => n.id === state.activeNoteId)) {
           state.activeNoteId = null;
-          state.activeNoteContentId = null;
-          state.activeNoteContent = '<p></p>';
           showEmptyEditor();
         }
         renderAll();
         showToast('ゴミ箱を空にしました', 'info');
       });
 
-      // バルク選択操作
-      el.bulkSelectAllCheckbox.addEventListener('change', (e) => {
-        const visible = getFilteredAndSortedNotes().slice(0, state.renderedListCount);
-        if (e.target.checked) visible.forEach(n => state.selectedNoteIds.add(n.id));
-        else state.selectedNoteIds.clear();
-        renderNotesList();
-      });
-
-      el.bulkMoveBtn.addEventListener('click', async () => {
-        const ids = Array.from(state.selectedNoteIds);
-        if (ids.length === 0) return;
-        await openCustomModal({
-          title: `📁 ${ids.length}件のノートを一括移動`,
-          bodyHtml: `
-            <label class="field-label">移動先のノートブック（空欄で未分類へ）</label>
-            <input type="text" id="modal-bulk-nb" class="field-input" list="bulk-nb-datalist" placeholder="ノートブック名を入力または選択">
-            <datalist id="bulk-nb-datalist">${state.notebooks.map(nb => `<option value="${escapeHtml(nb)}">`).join('')}</datalist>
-          `,
-          actions: [
-            {
-              label: '移動する',
-              className: 'btn btn-brand',
-              onClick: async (bodyEl) => {
-                const targetNb = bodyEl.querySelector('#modal-bulk-nb').value.trim();
-                for (const id of ids) {
-                  const m = state.notes.find(n => n.id === id);
-                  if (m) {
-                    m.notebook = targetNb;
-                    m.syncStatus = 'dirty';
-                    await saveNoteMetaAndBodyToDB(m, null, true).catch(() => {});
-                    enqueueCloudUpload(m.id);
-                  }
-                }
-                state.selectedNoteIds.clear();
-                rebuildNotebooksFromNotes();
-                renderAll();
-                showToast(`${ids.length}件のノートを移動しました`, 'success');
-              }
-            },
-            { label: 'キャンセル', className: 'btn btn-muted', value: 'cancel' }
-          ]
-        });
-      });
-
-      el.bulkTagBtn.addEventListener('click', async () => {
-        const ids = Array.from(state.selectedNoteIds);
-        if (ids.length === 0) return;
-        await openCustomModal({
-          title: `🏷️ ${ids.length}件のノートにタグ一括付与`,
-          bodyHtml: `<input type="text" id="modal-bulk-tag" class="field-input" placeholder="追加するタグ名（カンマ区切り可）">`,
-          actions: [
-            {
-              label: 'タグを追加',
-              className: 'btn btn-brand',
-              onClick: async (bodyEl) => {
-                const raw = bodyEl.querySelector('#modal-bulk-tag').value;
-                const newTags = raw.split(/[,、\s]+/).map(s => s.replace(/^#/, '').trim()).filter(Boolean);
-                if (newTags.length === 0) return false;
-                for (const id of ids) {
-                  const m = state.notes.find(n => n.id === id);
-                  if (m) {
-                    m.tags = Array.from(new Set([...(m.tags || []), ...newTags]));
-                    m.syncStatus = 'dirty';
-                    await saveNoteMetaAndBodyToDB(m, null, true).catch(() => {});
-                    enqueueCloudUpload(m.id);
-                  }
-                }
-                state.selectedNoteIds.clear();
-                renderAll();
-                showToast(`${ids.length}件にタグを付与しました`, 'success');
-              }
-            },
-            { label: 'キャンセル', className: 'btn btn-muted', value: 'cancel' }
-          ]
-        });
-      });
-
-      el.bulkTrashBtn.addEventListener('click', async () => {
-        const ids = Array.from(state.selectedNoteIds);
-        if (ids.length === 0) return;
-        for (const id of ids) {
-          const m = state.notes.find(n => n.id === id);
-          if (m) {
-            m.trashed = true;
-            m.pinned = false;
-            await saveNoteMetaAndBodyToDB(m, null, true).catch(() => {});
-            if (m.gdriveFileId) await trashOrDeleteGdriveFile(m.gdriveFileId);
-          }
-        }
-        state.selectedNoteIds.clear();
-        renderAll();
-        showToast(`${ids.length}件のノートをゴミ箱へ移動しました`, 'info');
-      });
-
-      // エディタ入力・書式ツールバー
-      el.noteTitleInput.addEventListener('input', scheduleSaveActiveNote);
-      el.noteRichEditor.addEventListener('input', (e) => {
-        scheduleSaveActiveNote();
-        if (!e.isComposing) {
-          checkWikiLinkTrigger();
-        }
-      });
-      el.noteRichEditor.addEventListener('compositionend', () => {
-        checkWikiLinkTrigger();
-      });
-      el.noteRichEditor.addEventListener('change', (e) => {
-        if (e.target && e.target.matches('input[type="checkbox"]')) {
-          scheduleSaveActiveNote();
-        }
-      });
-
-      el.noteRichEditor.addEventListener('paste', async (e) => {
-        const items = Array.from(e.clipboardData?.items || []);
-        const imageItem = items.find(it => it.type.startsWith('image/'));
-        if (imageItem) {
-          e.preventDefault();
-          const file = imageItem.getAsFile();
-          if (file) await embedFileIntoActiveEditor(file);
-        }
-      });
-
-      el.addTagInput.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') {
-          e.preventDefault();
-          const meta = getActiveNoteMeta();
-          const val = el.addTagInput.value.replace(/^#/, '').trim();
-          if (!meta || !val) return;
-          if (!meta.tags.includes(val)) {
-            meta.tags.push(val);
-            renderActiveNoteTags(meta);
-            scheduleSaveActiveNote();
-          }
-          el.addTagInput.value = '';
-        }
-      });
-
-      el.editCreatedBtn.addEventListener('click', async () => {
-        const meta = getActiveNoteMeta();
-        if (!meta) return;
-        const d = new Date(meta.created);
-        const pad = (n) => String(n).padStart(2, '0');
-        const localVal = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-        await openCustomModal({
-          title: '📅 作成日時の変更',
-          bodyHtml: `<input type="datetime-local" id="modal-created-dt" class="field-input" value="${localVal}">`,
-          actions: [
-            {
-              label: '変更する',
-              className: 'btn btn-brand',
-              onClick: (bodyEl) => {
-                const v = bodyEl.querySelector('#modal-created-dt').value;
-                if (!v) return false;
-                meta.created = new Date(v).toISOString();
-                updateEditorHeaderMeta(meta);
-                scheduleSaveActiveNote();
-              }
-            },
-            { label: 'キャンセル', className: 'btn btn-muted', value: 'cancel' }
-          ]
-        });
-      });
-
-      el.editorToolbar.querySelectorAll('.toolbar-btn').forEach(btn => {
-        btn.addEventListener('mousedown', (e) => {
-          e.preventDefault();
-          if (document.activeElement !== el.noteRichEditor) {
-            el.noteRichEditor.focus();
-          }
-          const cmd = btn.dataset.cmd;
-          const val = btn.dataset.val || null;
-          document.execCommand(cmd, false, val);
+      document.querySelectorAll('.toolbar-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          document.execCommand(btn.dataset.cmd, false, null);
+          el.noteRichEditor.focus();
           scheduleSaveActiveNote();
         });
       });
 
       el.insertCheckboxBtn.addEventListener('click', () => {
-        const div = document.createElement('div');
-        div.innerHTML = `<label style="display:inline-flex;align-items:center;gap:6px;"><input type="checkbox"> <span>タスク項目</span></label>`;
-        insertNodeAtEditorCursor(div);
+        const wrapper = document.createElement('div');
+        wrapper.innerHTML = `<input type="checkbox"> <span></span>`;
+        insertNodeAtEditorCursor(wrapper);
         scheduleSaveActiveNote();
       });
 
       el.insertTableBtn.addEventListener('click', () => {
         const table = document.createElement('table');
-        table.innerHTML = `<thead><tr><th>項目1</th><th>項目2</th><th>項目3</th></tr></thead><tbody><tr><td><br></td><td><br></td><td><br></td></tr><tr><td><br></td><td><br></td><td><br></td></tr></tbody>`;
+        table.innerHTML = `<thead><tr><th>見出し1</th><th>見出し2</th><th>見出し3</th></tr></thead><tbody><tr><td><br></td><td><br></td><td><br></td></tr><tr><td><br></td><td><br></td><td><br></td></tr></tbody>`;
         insertNodeAtEditorCursor(table);
         const p = document.createElement('p');
         p.innerHTML = '<br>';
@@ -4472,43 +4753,72 @@
 
       el.embedMediaBtn.addEventListener('click', () => el.embedMediaInput.click());
       el.embedMediaInput.addEventListener('change', async (e) => {
-        for (const file of Array.from(e.target.files || [])) {
-          await embedFileIntoActiveEditor(file);
-        }
+        for (const f of Array.from(e.target.files || [])) await embedFileIntoActiveEditor(f);
         e.target.value = '';
       });
 
       el.insertLinkCardBtn.addEventListener('click', () => openDriveLinkCardModal(''));
       el.insertNoteLinkBtn.addEventListener('click', showNoteLinkPickerWithFilter);
 
-      const hideImageFloatingToolbar = () => {
-        el.noteRichEditor.querySelectorAll('img.selected-editor-img').forEach(img => img.classList.remove('selected-editor-img'));
-        state.activeEditorImg = null;
-        el.imageFloatingToolbar.classList.add('hidden');
-      };
+      el.editCreatedBtn.addEventListener('click', async () => {
+        const meta = getActiveNoteMeta();
+        if (!meta) return;
+        const d = new Date(meta.created);
+        const localIso = new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+        await openCustomModal({
+          title: '📅 作成日時の変更',
+          bodyHtml: `<input type="datetime-local" id="modal-created-dt" class="field-input" value="${localIso}">`,
+          actions: [
+            {
+              label: '更新する',
+              className: 'btn btn-brand',
+              onClick: (bodyEl) => {
+                const val = bodyEl.querySelector('#modal-created-dt').value;
+                if (!val) return false;
+                meta.created = new Date(val).toISOString();
+                updateEditorHeaderMeta(meta);
+                scheduleSaveActiveNote();
+              }
+            },
+            { label: 'キャンセル', className: 'btn btn-muted', value: 'cancel' }
+          ]
+        });
+      });
 
-      const updateImageFloatingToolbarPosition = () => {
-        const img = state.activeEditorImg;
-        if (!img || !img.isConnected) {
-          hideImageFloatingToolbar();
-          return;
+      el.noteTitleInput.addEventListener('input', scheduleSaveActiveNote);
+      el.noteRichEditor.addEventListener('input', () => {
+        scheduleSaveActiveNote();
+        checkWikiLinkTrigger();
+      });
+      el.noteRichEditor.addEventListener('change', (e) => {
+        if (e.target && e.target.matches('input[type="checkbox"]')) {
+          if (e.target.checked) e.target.setAttribute('checked', 'checked');
+          else e.target.removeAttribute('checked');
+          scheduleSaveActiveNote();
         }
-        const rect = img.getBoundingClientRect();
-        const scrollContainer = el.noteRichEditor.closest('.editor-scroll');
-        if (scrollContainer) {
-          const scRect = scrollContainer.getBoundingClientRect();
-          if (rect.bottom < scRect.top || rect.top > scRect.bottom) {
-            el.imageFloatingToolbar.classList.add('hidden');
-            return;
+      });
+
+      el.noteRichEditor.addEventListener('paste', async (e) => {
+        const items = Array.from(e.clipboardData?.items || []);
+        const imageItems = items.filter(it => it.type.startsWith('image/'));
+        if (imageItems.length > 0) {
+          e.preventDefault();
+          for (const it of imageItems) {
+            const file = it.getAsFile();
+            if (file) await embedFileIntoActiveEditor(file);
           }
         }
-        el.imageFloatingToolbar.style.left = `${Math.min(window.innerWidth - 260, Math.max(12, rect.left))}px`;
-        el.imageFloatingToolbar.style.top = `${Math.max(56, rect.top - 44)}px`;
-        el.imageFloatingToolbar.classList.remove('hidden');
-      };
+      });
 
-      // エディタ内クリック（内部リンク遷移・リンクカード編集・画像選択ツールバー）
       el.noteRichEditor.addEventListener('click', (e) => {
+        const editCardBtn = e.target.closest('.loosenote-edit-link-card-btn');
+        if (editCardBtn) {
+          e.preventDefault();
+          e.stopPropagation();
+          const card = editCardBtn.closest('.loosenote-link-card');
+          if (card) openDriveLinkCardModal('', card);
+          return;
+        }
         const internalLink = e.target.closest('a.loosenote-internal-link');
         if (internalLink) {
           e.preventDefault();
@@ -4516,46 +4826,27 @@
           if (targetId) selectNote(targetId, true, true);
           return;
         }
-
-        const editCardBtn = e.target.closest('.loosenote-edit-link-card-btn');
-        if (editCardBtn) {
-          e.preventDefault();
-          const cardEl = editCardBtn.closest('.loosenote-link-card');
-          if (cardEl) openDriveLinkCardModal('', cardEl);
-          return;
-        }
-
-        const clickedImg = e.target.closest('img');
-        if (clickedImg) {
-          el.noteRichEditor.querySelectorAll('img.selected-editor-img').forEach(img => img.classList.remove('selected-editor-img'));
-          state.activeEditorImg = clickedImg;
-          clickedImg.classList.add('selected-editor-img');
-          updateImageFloatingToolbarPosition();
+        const img = e.target.closest('img');
+        if (img && el.noteRichEditor.contains(img)) {
+          el.noteRichEditor.querySelectorAll('img.selected-editor-img').forEach(i => i.classList.remove('selected-editor-img'));
+          img.classList.add('selected-editor-img');
+          state.activeEditorImg = img;
+          const rect = img.getBoundingClientRect();
+          el.imageFloatingToolbar.style.left = `${Math.max(12, Math.min(window.innerWidth - 260, rect.left))}px`;
+          el.imageFloatingToolbar.style.top = `${Math.max(56, rect.top - 42)}px`;
+          el.imageFloatingToolbar.classList.remove('hidden');
         } else {
-          hideImageFloatingToolbar();
+          el.noteRichEditor.querySelectorAll('img.selected-editor-img').forEach(i => i.classList.remove('selected-editor-img'));
+          state.activeEditorImg = null;
+          el.imageFloatingToolbar.classList.add('hidden');
         }
-      });
-
-      const editorScrollEl = el.noteRichEditor.closest('.editor-scroll');
-      if (editorScrollEl) {
-        editorScrollEl.addEventListener('scroll', () => {
-          if (state.activeEditorImg) updateImageFloatingToolbarPosition();
-        }, { passive: true });
-      }
-      window.addEventListener('resize', () => {
-        if (state.activeEditorImg) updateImageFloatingToolbarPosition();
-      });
-      document.addEventListener('mousedown', (e) => {
-        if (!state.activeEditorImg) return;
-        if (el.noteRichEditor.contains(e.target) || el.imageFloatingToolbar.contains(e.target) || el.imageLightboxModal.contains(e.target)) return;
-        hideImageFloatingToolbar();
       });
 
       el.imageFloatingToolbar.querySelectorAll('[data-img-size]').forEach(btn => {
         btn.addEventListener('click', () => {
           if (!state.activeEditorImg) return;
           state.activeEditorImg.style.width = btn.dataset.imgSize;
-          state.activeEditorImg.style.maxWidth = '100%';
+          state.activeEditorImg.style.height = 'auto';
           scheduleSaveActiveNote();
         });
       });
@@ -4570,99 +4861,125 @@
         if (e.target === el.imageLightboxModal) el.imageLightboxModal.classList.add('hidden');
       });
 
-      // 画面全体＆エディタへのドラッグ＆ドロップ
+      el.addTagInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.isComposing) {
+          e.preventDefault();
+          const meta = getActiveNoteMeta();
+          const tag = el.addTagInput.value.trim().replace(/^#/, '');
+          if (!meta || !tag) return;
+          if (!(meta.tags || []).includes(tag)) {
+            meta.tags = [...(meta.tags || []), tag];
+            renderActiveNoteTags(meta);
+            scheduleSaveActiveNote();
+          }
+          el.addTagInput.value = '';
+        }
+      });
+
       let dragCounter = 0;
-      const resetDragOverlayState = () => {
-        dragCounter = 0;
-        el.globalDropOverlay.classList.add('hidden');
-        el.editorPane.classList.remove('editor-drop-active');
-        el.editorDropBanner.classList.add('hidden');
+      const setEditorDropIndicator = (active) => {
+        el.editorPane.classList.toggle('editor-drop-active', active);
+        el.editorDropBanner.classList.toggle('hidden', !active);
       };
 
       window.addEventListener('dragenter', (e) => {
-        if (!e.dataTransfer?.types?.includes('Files')) return;
-        e.preventDefault();
+        if (!e.dataTransfer || !Array.from(e.dataTransfer.types || []).includes('Files')) return;
         dragCounter++;
-        const overEditor = el.editorPane.contains(e.target) && Boolean(state.activeNoteId);
-        el.globalDropOverlay.classList.toggle('hidden', overEditor);
-        el.editorPane.classList.toggle('editor-drop-active', overEditor);
-        el.editorDropBanner.classList.toggle('hidden', !overEditor);
+        const isOverEditor = Boolean(el.activeEditorContainer && !el.activeEditorContainer.classList.contains('hidden') && el.editorPane.contains(e.target));
+        if (isOverEditor) {
+          el.globalDropOverlay.classList.add('hidden');
+          setEditorDropIndicator(true);
+        } else {
+          setEditorDropIndicator(false);
+          el.globalDropOverlay.classList.remove('hidden');
+        }
       });
       window.addEventListener('dragover', (e) => {
-        if (!e.dataTransfer?.types?.includes('Files')) return;
+        if (!e.dataTransfer || !Array.from(e.dataTransfer.types || []).includes('Files')) return;
         e.preventDefault();
-        const overEditor = el.editorPane.contains(e.target) && Boolean(state.activeNoteId);
-        el.globalDropOverlay.classList.toggle('hidden', overEditor);
-        el.editorPane.classList.toggle('editor-drop-active', overEditor);
-        el.editorDropBanner.classList.toggle('hidden', !overEditor);
-      });
-      window.addEventListener('dragleave', (e) => {
-        if (!e.dataTransfer?.types?.includes('Files')) return;
-        dragCounter = Math.max(0, dragCounter - 1);
-        if (dragCounter === 0 || e.relatedTarget === null) {
-          resetDragOverlayState();
+        const isOverEditor = Boolean(el.activeEditorContainer && !el.activeEditorContainer.classList.contains('hidden') && el.editorPane.contains(e.target));
+        if (isOverEditor) {
+          el.globalDropOverlay.classList.add('hidden');
+          setEditorDropIndicator(true);
+        } else {
+          setEditorDropIndicator(false);
+          el.globalDropOverlay.classList.remove('hidden');
         }
       });
-      window.addEventListener('dragend', resetDragOverlayState);
-      window.addEventListener('blur', resetDragOverlayState);
+      window.addEventListener('dragleave', () => {
+        dragCounter = Math.max(0, dragCounter - 1);
+        if (dragCounter === 0) {
+          el.globalDropOverlay.classList.add('hidden');
+          setEditorDropIndicator(false);
+        }
+      });
       window.addEventListener('drop', async (e) => {
-        if (!e.dataTransfer?.files?.length) return;
+        if (!e.dataTransfer || !e.dataTransfer.files || e.dataTransfer.files.length === 0) return;
         e.preventDefault();
-        const droppedInEditor = el.editorPane.contains(e.target) && Boolean(state.activeNoteId);
-        resetDragOverlayState();
+        dragCounter = 0;
+        const droppedOnEditor = Boolean(el.activeEditorContainer && !el.activeEditorContainer.classList.contains('hidden') && el.editorPane.contains(e.target));
+        el.globalDropOverlay.classList.add('hidden');
+        setEditorDropIndicator(false);
 
-        if (droppedInEditor) {
-          for (const file of Array.from(e.dataTransfer.files)) {
-            await embedFileIntoActiveEditor(file);
+        const files = Array.from(e.dataTransfer.files);
+        if (droppedOnEditor && state.activeNoteId) {
+          for (const file of files) {
+            const lower = file.name.toLowerCase();
+            if (lower.endsWith('.enex') || lower.endsWith('.xml') || lower.endsWith('.zip') || lower.endsWith('.html') || lower.endsWith('.htm')) {
+              await handleImportedFiles([file]);
+            } else {
+              await embedFileIntoActiveEditor(file);
+            }
           }
         } else {
-          await handleImportedFiles(e.dataTransfer.files);
+          await handleImportedFiles(files);
         }
       });
 
-      // キーボードショートカット (Ctrl+K / Escape)
       window.addEventListener('keydown', (e) => {
         if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
           e.preventDefault();
           openQuickJumpModal();
         } else if (e.key === 'Escape') {
-          if (!el.customModal.classList.contains('hidden')) {
-            closeActiveCustomModal(null);
-            return;
-          }
           el.imageLightboxModal.classList.add('hidden');
           el.noteLinkPopup.classList.add('hidden');
-          hideImageFloatingToolbar();
+          closeMobileSidebar();
+          if (!el.customModal.classList.contains('hidden')) {
+            closeActiveCustomModal(null);
+          }
         }
       });
 
-      window.addEventListener('beforeunload', () => {
-        if (state.pendingSaveNoteId) flushPendingSave();
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'hidden') flushPendingSave();
       });
+      window.addEventListener('beforeunload', () => flushPendingSave());
     }
 
     async function seedWelcomeNoteIfEmpty() {
       if (state.notes.length > 0) return;
       const now = new Date().toISOString();
       const welcome = {
-        id: 'note_welcome_guide',
-        title: 'ようこそ LooseNote へ！基本の使い方ガイド',
+        id: 'note_welcome_loosenote_cloud',
+        title: 'LooseNote へようこそ（スマホ・PC直接クラウド同期対応）',
         notebook: '',
-        tags: ['ガイド', 'クラウド対応'],
+        tags: ['ガイド', 'クラウド同期'],
         pinned: true,
         trashed: false,
         created: now,
         updated: now,
-        syncStatus: 'local_only',
         content: `
-          <p><strong>LooseNote</strong> は、PC・Android・iPhone から自分の <strong>Googleドライブ</strong> へ単一HTML形式で直接保存・同期できる超軽量クラウドノートです。</p>
-          <h3>✨ 主な特徴</h3>
+          <p><strong>LooseNote</strong> は、1ノート＝1HTMLファイルで動作する高速・軽量なクラウド対応メモ＆ドキュメント管理ツールです。</p>
+          <h2>🚀 主な特長</h2>
           <ul>
-            <li><strong>ドラッグ＆ドロップで即ノート化</strong>：画像（自動WebP軽量化）・PDF・テキスト・Evernote（<code>.enex</code>）・<code>.zip</code> を画面にドロップするだけで取り込めます。</li>
-            <li><strong>10MB超ファイルのスマート運用</strong>：10MBを超える大容量ファイルはHTMLに直接埋め込まず、Googleドライブ別フォルダ保管＆リンクカード形式でノートの軽快さを維持します。</li>
-            <li><strong>高速検索＆クイックジャンプ</strong>：<code>Ctrl+K</code>（または <code>Cmd+K</code>）や、本文中の <code>[[</code> 入力で他のノートへ瞬時にリンク・移動できます。</li>
+            <li><strong>Android Chrome / iPhone / PC から直接 Google Drive 同期：</strong>右上の「Googleドライブに接続」に OAuth クライアントID を設定するだけで、サーバーを介さず自分のGoogleドライブへ直接保存・差分同期できます。</li>
+            <li><strong>数千件でもサクサク動くスマートLRUキャッシュ：</strong>軽量メタデータと本文を分離し、直近開いたノート（PC 100件 / スマホ 30件）だけを自動キャッシュするためメモリや端末容量を圧迫しません。</li>
+            <li><strong>10MB超ファイル自動ガード：</strong>10MB以下の画像やPDFは自動WebP軽量化してHTML内に埋め込み、10MB超の大容量ファイルはGoogleドライブ別フォルダ保管＆リンクカード運用を自動提案します。</li>
+            <li><strong>Evernote (.enex) / ZIP 一括インポート：</strong>左下のボタンまたは画面へのドラッグ＆ドロップでそのまま取り込めます。</li>
           </ul>
-        `
+          <p>※ 本文中で <code>[[</code> と入力すると、他のノートへの内部リンクをすばやく挿入できます。</p>
+        `,
+        syncStatus: 'local_only'
       };
       const { meta, body } = splitNoteToMetaAndBody(welcome);
       await saveNoteMetaAndBodyToDB(meta, body, true);
@@ -4671,13 +4988,11 @@
 
     async function initApp() {
       const savedTheme = safeStorage.getItem('loosenote-theme');
-      const prefersDark = savedTheme ? savedTheme === 'dark' : window.matchMedia('(prefers-color-scheme: dark)').matches;
-      applyTheme(prefersDark);
+      const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+      applyTheme(savedTheme ? savedTheme === 'dark' : prefersDark);
 
       el.iconViewCompact.classList.toggle('hidden', state.isCompactList);
       el.iconViewCard.classList.toggle('hidden', !state.isCompactList);
-      updateSortControlsUI();
-
       bindEvents();
 
       try {
@@ -4687,13 +5002,16 @@
         state.notes = [];
       }
 
+      const savedCustomNbs = await getAppMeta('custom_notebooks');
+      state.customNotebooks = Array.isArray(savedCustomNbs) ? savedCustomNbs : [];
+
       await seedWelcomeNoteIfEmpty();
       rebuildNotebooksFromNotes();
       renderAll();
 
-      const firstActive = getFilteredAndSortedNotes()[0] || state.notes.find(n => !n.trashed);
-      if (firstActive && !isMobileViewport()) {
-        await selectNote(firstActive.id, false);
+      const sorted = getFilteredAndSortedNotes();
+      if (sorted.length > 0 && !isMobileViewport()) {
+        await selectNote(sorted[0].id, false);
       } else {
         showEmptyEditor();
       }
@@ -4701,6 +5019,4 @@
 
     initApp();
   </script>
-
-
 </body></html>
