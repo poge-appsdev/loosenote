@@ -1597,6 +1597,10 @@
       const searchSnippet = plainText.slice(0, SEARCH_INDEX_MAX_CHARS);
       const charCount = fullNote.charCount !== undefined ? fullNote.charCount : plainText.length;
       if (plainText.length > SEARCH_INDEX_MAX_CHARS) {
+        if (state.fullTextSearchCache.size >= 50 && !state.fullTextSearchCache.has(fullNote.id)) {
+          const oldestKey = state.fullTextSearchCache.keys().next().value;
+          if (oldestKey) state.fullTextSearchCache.delete(oldestKey);
+        }
         state.fullTextSearchCache.set(fullNote.id, plainText.toLowerCase());
       } else {
         state.fullTextSearchCache.delete(fullNote.id);
@@ -1647,6 +1651,10 @@
       if (!content) return;
       const plainText = stripHtmlToText(content);
       if (plainText.length > SEARCH_INDEX_MAX_CHARS) {
+        if (state.fullTextSearchCache.size >= 50 && !state.fullTextSearchCache.has(noteId)) {
+          const oldestKey = state.fullTextSearchCache.keys().next().value;
+          if (oldestKey) state.fullTextSearchCache.delete(oldestKey);
+        }
         state.fullTextSearchCache.set(noteId, plainText.toLowerCase());
       } else {
         state.fullTextSearchCache.delete(noteId);
@@ -1667,7 +1675,6 @@
           req.onsuccess = () => {
             const content = req.result ? req.result.content : null;
             if (content !== null) {
-              fallbackBodyStore.set(noteId, content);
               updateFullTextCacheFromContent(noteId, content);
             }
             resolve(content);
@@ -1681,7 +1688,6 @@
 
     async function saveNoteMetaAndBodyToDB(meta, body = null, skipLruTrim = false) {
       fallbackMetaStore.set(meta.id, { ...meta });
-      if (body) fallbackBodyStore.set(meta.id, body.content);
       try {
         const db = await openAppDB();
         await new Promise((resolve, reject) => {
@@ -1692,7 +1698,11 @@
           tx.oncomplete = () => resolve();
           tx.onerror = () => reject(tx.error);
         });
+        if (body) {
+          fallbackBodyStore.delete(meta.id);
+        }
       } catch (err) {
+        if (body) fallbackBodyStore.set(meta.id, body.content);
         throw err;
       }
       if (body && !skipLruTrim) {
@@ -2578,7 +2588,7 @@
     }
 
     /* ==========================================================================
-       7. Evernote (.enex) / ZIP / HTML インポート（DOMParser + チャンク処理）
+       7. Evernote (.enex) / ZIP / HTML インポート（ストリーミング逐次解析＋省メモリ解放）
        ========================================================================== */
     function parseEvernoteDate(str) {
       if (!str || str.length < 15) return new Date().toISOString();
@@ -2588,10 +2598,9 @@
       return isNaN(dt.getTime()) ? new Date().toISOString() : dt.toISOString();
     }
 
-    async function computeMd5HexForResources(b64) {
+    async function computeMd5HexForResources(cleanB64) {
       try {
-        const clean = b64.replace(/\s+/g, '');
-        const bin = atob(clean);
+        const bin = atob(cleanB64);
         const bytes = new Uint8Array(bin.length);
         for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
         return md5Bytes(bytes);
@@ -2630,31 +2639,108 @@
       return hex(a0) + hex(b0) + hex(c0) + hex(d0);
     }
 
+    function extractCompletedEnexNotesFromBuffer(buffer, isEof) {
+      const notes = [];
+      let searchPos = 0;
+      let noteStart = -1;
+      let inCdata = false;
+
+      while (searchPos < buffer.length) {
+        if (inCdata) {
+          const cdataEnd = buffer.indexOf(']]>', searchPos);
+          if (cdataEnd === -1) break;
+          inCdata = false;
+          searchPos = cdataEnd + 3;
+          continue;
+        }
+
+        const nextCdata = buffer.indexOf('<![CDATA[', searchPos);
+        if (noteStart === -1) {
+          const nextOpen = buffer.indexOf('<note', searchPos);
+          if (nextOpen === -1 && nextCdata === -1) {
+            searchPos = Math.max(0, buffer.length - 16);
+            break;
+          }
+          if (nextCdata !== -1 && (nextOpen === -1 || nextCdata < nextOpen)) {
+            inCdata = true;
+            searchPos = nextCdata + 9;
+            continue;
+          }
+          const afterTagChar = buffer[nextOpen + 5];
+          if (afterTagChar === undefined) {
+            searchPos = nextOpen;
+            break;
+          }
+          if (afterTagChar === '>' || afterTagChar === ' ' || afterTagChar === '\t' || afterTagChar === '\r' || afterTagChar === '\n') {
+            noteStart = nextOpen;
+          }
+          searchPos = nextOpen + 5;
+        } else {
+          const nextClose = buffer.indexOf('</note>', searchPos);
+          if (nextClose === -1 && nextCdata === -1) {
+            break;
+          }
+          if (nextCdata !== -1 && (nextClose === -1 || nextCdata < nextClose)) {
+            inCdata = true;
+            searchPos = nextCdata + 9;
+            continue;
+          }
+          const noteEnd = nextClose + 7;
+          notes.push(buffer.slice(noteStart, noteEnd));
+          noteStart = -1;
+          searchPos = noteEnd;
+        }
+      }
+
+      let remainder = '';
+      if (!isEof) {
+        if (noteStart !== -1) {
+          remainder = buffer.slice(noteStart);
+        } else if (searchPos < buffer.length) {
+          remainder = buffer.slice(searchPos);
+        }
+      }
+      return { notes, remainder };
+    }
+
     async function importEnexFile(file) {
       if (state.isEnexImporting) {
         showToast('現在インポート処理中です。完了までお待ちください。', 'info');
         return;
       }
       state.isEnexImporting = true;
+      state.abortSyncRequested = false;
       const defaultNotebookName = file.name.replace(/\.(enex|xml)$/i, '').trim();
-      setSyncProgress(true, `ENEXファイルを解析中: ${file.name}`, 10);
+      setSyncProgress(true, `ENEXファイルを解析中: ${file.name}`, 5);
 
       try {
-        const xmlText = await file.text();
         const parser = new DOMParser();
-        const xmlDoc = parser.parseFromString(xmlText, 'text/xml');
-        const parseErr = xmlDoc.querySelector('parsererror');
-        if (parseErr) {
-          throw new Error(`ENEXのXML構文が破損しています: ${(parseErr.textContent || '').trim().slice(0, 100)}`);
-        }
-        const noteNodes = Array.from(xmlDoc.getElementsByTagName('note'));
-        if (noteNodes.length === 0) throw new Error('ENEX内にノートが見つかりませんでした');
-
+        const decoder = new TextDecoder('utf-8');
+        const CHUNK_SIZE = 4 * 1024 * 1024;
+        const totalBytes = file.size || 1;
+        let offset = 0;
+        let textBuffer = '';
         let imported = 0;
+        let skippedBrokenCount = 0;
         let largeSkippedCount = 0;
+        let lastImportedId = null;
+        let headerChecked = false;
 
-        for (let i = 0; i < noteNodes.length; i++) {
-          const node = noteNodes[i];
+        const processSingleNoteXml = async (noteXml, noteIndex) => {
+          let xmlDoc = parser.parseFromString(noteXml, 'text/xml');
+          if (xmlDoc.querySelector('parsererror')) {
+            const sanitizedXml = noteXml.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '');
+            xmlDoc = parser.parseFromString(sanitizedXml, 'text/xml');
+            if (xmlDoc.querySelector('parsererror')) {
+              skippedBrokenCount++;
+              return;
+            }
+          }
+          noteXml = '';
+
+          const node = xmlDoc.getElementsByTagName('note')[0];
+          if (!node) return;
+
           const title = node.getElementsByTagName('title')[0]?.textContent || '無題のノート';
           const created = parseEvernoteDate(node.getElementsByTagName('created')[0]?.textContent);
           const updated = parseEvernoteDate(node.getElementsByTagName('updated')[0]?.textContent);
@@ -2665,20 +2751,36 @@
           const resNodes = Array.from(node.getElementsByTagName('resource'));
           for (const rNode of resNodes) {
             const dataEl = rNode.getElementsByTagName('data')[0];
-            const b64 = (dataEl?.textContent || '').replace(/\s+/g, '');
+            const cleanB64 = (dataEl?.textContent || '').replace(/\s+/g, '');
+            if (dataEl) dataEl.textContent = '';
+
             const mime = rNode.getElementsByTagName('mime')[0]?.textContent || 'application/octet-stream';
             const fileName = rNode.getElementsByTagName('file-name')[0]?.textContent || 'attachment';
-            const approxBytes = Math.floor((b64.length * 3) / 4);
-            const hashAttr = rNode.getElementsByTagName('recognition')[0]?.textContent?.match(/objID="([a-f0-9]{32})"/i)?.[1]
-              || await computeMd5HexForResources(b64);
-            const item = { b64, mime, fileName, approxBytes, hash: hashAttr.toLowerCase(), used: false };
-            if (hashAttr) resMap.set(hashAttr.toLowerCase(), item);
+            const approxBytes = Math.floor((cleanB64.length * 3) / 4);
+            const isTooLarge = approxBytes > LARGE_FILE_THRESHOLD;
+
+            const recHash = rNode.getElementsByTagName('recognition')[0]?.textContent?.match(/objID="([a-f0-9]{32})"/i)?.[1] || '';
+            const hashAttr = recHash || (!isTooLarge && cleanB64.length > 0 ? await computeMd5HexForResources(cleanB64) : '');
+
+            const item = {
+              b64: isTooLarge ? '' : cleanB64,
+              mime,
+              fileName,
+              approxBytes,
+              isTooLarge,
+              hash: hashAttr.toLowerCase(),
+              used: false
+            };
+            if (item.hash) resMap.set(item.hash, item);
             resList.push(item);
           }
 
-          const rawEnml = (node.getElementsByTagName('content')[0]?.textContent || '')
+          const contentEl = node.getElementsByTagName('content')[0];
+          const rawEnml = (contentEl?.textContent || '')
             .replace(/<en-media\b([^>]*?)\s*\/>/gi, '<en-media$1></en-media>')
             .replace(/<en-todo\b([^>]*?)\s*\/>/gi, '<en-todo$1></en-todo>');
+          if (contentEl) contentEl.textContent = '';
+
           const enmlDoc = parser.parseFromString(rawEnml, 'text/html');
           const enNote = enmlDoc.querySelector('en-note') || enmlDoc.body;
 
@@ -2697,7 +2799,7 @@
               if (!res) { media.remove(); return; }
               res.used = true;
 
-              if (res.approxBytes > LARGE_FILE_THRESHOLD) {
+              if (res.isTooLarge) {
                 largeSkippedCount++;
                 const card = enmlDoc.createElement('div');
                 card.className = 'loosenote-link-card';
@@ -2708,6 +2810,7 @@
               }
 
               const dataUrl = `data:${res.mime};base64,${res.b64}`;
+              res.b64 = '';
               if (res.mime.startsWith('image/')) {
                 const img = enmlDoc.createElement('img');
                 img.src = dataUrl;
@@ -2723,21 +2826,27 @@
             });
           }
 
-          let bodyHtml = enNote ? enNote.innerHTML : '<p></p>';
+          const extraParts = [];
           for (const res of resList) {
             if (res.used) continue;
-            if (res.approxBytes > LARGE_FILE_THRESHOLD) {
+            if (res.isTooLarge) {
               largeSkippedCount++;
-              bodyHtml += `<div class="loosenote-link-card" style="border:1px solid #bae6fd;background:#f0f9ff;border-radius:12px;padding:12px 14px;margin:10px 0;"><div style="font-size:11px;font-weight:700;color:#0284c7;">⚠️ 10MB超添付ファイル（埋め込み除外）</div><div style="font-size:13px;font-weight:700;">📎 ${escapeHtml(res.fileName)} (${formatBytes(res.approxBytes)})</div></div>`;
+              extraParts.push(`<div class="loosenote-link-card" style="border:1px solid #bae6fd;background:#f0f9ff;border-radius:12px;padding:12px 14px;margin:10px 0;"><div style="font-size:11px;font-weight:700;color:#0284c7;">⚠️ 10MB超添付ファイル（埋め込み除外）</div><div style="font-size:13px;font-weight:700;">📎 ${escapeHtml(res.fileName)} (${formatBytes(res.approxBytes)})</div></div>`);
             } else if (res.mime.startsWith('image/')) {
-              bodyHtml += `<p><img src="data:${res.mime};base64,${res.b64}" alt="${escapeHtml(res.fileName)}"></p>`;
+              extraParts.push(`<p><img src="data:${res.mime};base64,${res.b64}" alt="${escapeHtml(res.fileName)}"></p>`);
             } else {
-              bodyHtml += `<p><a href="data:${res.mime};base64,${res.b64}" download="${escapeHtml(res.fileName)}">📎 ${escapeHtml(res.fileName)} (${formatBytes(res.approxBytes)})</a></p>`;
+              extraParts.push(`<p><a href="data:${res.mime};base64,${res.b64}" download="${escapeHtml(res.fileName)}">📎 ${escapeHtml(res.fileName)} (${formatBytes(res.approxBytes)})</a></p>`);
             }
+            res.b64 = '';
           }
 
+          let bodyHtml = (enNote ? enNote.innerHTML : '<p></p>') + extraParts.join('');
+          extraParts.length = 0;
+          resMap.clear();
+          resList.length = 0;
+
           const fullNote = {
-            id: `note_enex_${Date.now()}_${i}_${Math.random().toString(36).slice(2, 6)}`,
+            id: `note_enex_${Date.now()}_${noteIndex}_${Math.random().toString(36).slice(2, 6)}`,
             title,
             notebook: defaultNotebookName,
             tags,
@@ -2748,29 +2857,74 @@
             content: bodyHtml || '<p></p>',
             syncStatus: 'local_only'
           };
+          bodyHtml = '';
+
           const { meta, body } = splitNoteToMetaAndBody(fullNote);
-          meta.thumbnail = await generateThumbnailDataUrl(fullNote.content);
+          fullNote.content = '';
+          meta.thumbnail = await generateThumbnailDataUrl(body.content);
           await saveNoteMetaAndBodyToDB(meta, body, true);
+          body.content = '';
+
           state.notes.push(meta);
           enqueueCloudUpload(meta.id);
+          lastImportedId = meta.id;
           imported++;
+        };
 
-          if (i % 5 === 0) {
-            setSyncProgress(true, `ENEX読込中 (${i + 1}/${noteNodes.length})`, 10 + Math.round(((i + 1) / noteNodes.length) * 85));
+        while (offset < totalBytes) {
+          if (state.abortSyncRequested) {
+            throw new Error('ユーザーによってインポートが中断されました');
+          }
+          const nextOffset = Math.min(totalBytes, offset + CHUNK_SIZE);
+          const chunkBuf = await file.slice(offset, nextOffset).arrayBuffer();
+          const isEof = nextOffset >= totalBytes;
+          textBuffer += decoder.decode(chunkBuf, { stream: !isEof });
+          offset = nextOffset;
+
+          if (!headerChecked && textBuffer.length > 512) {
+            headerChecked = true;
+            if (textBuffer.includes('<parsererror')) {
+              throw new Error('ENEXのXML構文が破損しています');
+            }
+          }
+
+          const { notes, remainder } = extractCompletedEnexNotesFromBuffer(textBuffer, isEof);
+          textBuffer = remainder;
+
+          for (let i = 0; i < notes.length; i++) {
+            if (state.abortSyncRequested) {
+              throw new Error('ユーザーによってインポートが中断されました');
+            }
+            const noteXml = notes[i];
+            notes[i] = '';
+            await processSingleNoteXml(noteXml, imported);
+
+            const pct = 5 + Math.round((offset / totalBytes) * 90);
+            setSyncProgress(true, `ENEX読込中 (${imported}件完了 / ${Math.round((offset / totalBytes) * 100)}%)`, pct);
             await yieldToMainThread();
           }
+        }
+
+        if (imported === 0) {
+          throw new Error(skippedBrokenCount > 0
+            ? 'ENEXのXML構文が破損しているためノートを読み込めませんでした'
+            : 'ENEX内にノートが見つかりませんでした');
         }
 
         await enforceLruBodyCacheLimit();
         rebuildNotebooksFromNotes();
         renderAll();
-        if (imported > 0) {
-          const lastNote = state.notes[state.notes.length - 1];
-          await selectNote(lastNote.id);
+        if (lastImportedId) {
+          await selectNote(lastImportedId);
         }
-        showToast(`ENEXから ${imported} 件のノートをインポートしました${largeSkippedCount > 0 ? `（10MB超ファイル ${largeSkippedCount}件はHTML軽量化のため除外）` : ''}`, 'success');
+        const extraNotes = [];
+        if (largeSkippedCount > 0) extraNotes.push(`10MB超ファイル ${largeSkippedCount}件はHTML軽量化のため除外`);
+        if (skippedBrokenCount > 0) extraNotes.push(`破損ノート ${skippedBrokenCount}件をスキップ`);
+        showToast(`ENEXから ${imported} 件のノートをインポートしました${extraNotes.length > 0 ? `（${extraNotes.join(' / ')}）` : ''}`, 'success');
       } catch (err) {
         console.error(err);
+        rebuildNotebooksFromNotes();
+        renderAll();
         showToast(`ENEXインポート失敗: ${err.message}`, 'error');
       } finally {
         state.isEnexImporting = false;
@@ -3203,6 +3357,10 @@
       meta.snippet = plainText.slice(0, 120);
       meta.searchSnippet = plainText.slice(0, SEARCH_INDEX_MAX_CHARS);
       if (plainText.length > SEARCH_INDEX_MAX_CHARS) {
+        if (state.fullTextSearchCache.size >= 50 && !state.fullTextSearchCache.has(meta.id)) {
+          const oldestKey = state.fullTextSearchCache.keys().next().value;
+          if (oldestKey) state.fullTextSearchCache.delete(oldestKey);
+        }
         state.fullTextSearchCache.set(meta.id, plainText.toLowerCase());
       } else {
         state.fullTextSearchCache.delete(meta.id);
@@ -3280,7 +3438,7 @@
 
     async function warmLongNotesSearchCache() {
       if (isWarmingSearchCache) return;
-      const targets = state.notes.filter(n => n.charCount > SEARCH_INDEX_MAX_CHARS && n.bodyCached && !state.fullTextSearchCache.has(n.id));
+      const targets = state.notes.filter(n => n.charCount > SEARCH_INDEX_MAX_CHARS && n.bodyCached && !state.fullTextSearchCache.has(n.id)).slice(0, 40);
       if (targets.length === 0) return;
       isWarmingSearchCache = true;
       try {
