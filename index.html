@@ -802,11 +802,7 @@
                 </div>
                 <span id="count-pinned" style="font-size:12px;flex-shrink:0;">1</span>
               </div>
-              <div id="sidebar-pinned-list" class="hidden" style="display:flex;flex-direction:column;gap:2px;margin-top:2px;">
-        <button type="button" class="tree-row indented" data-pin-note-id="note_welcome_guide" style="width:100%;text-align:left;">
-          <span class="truncate">📌 ようこそ LooseNote へ！基本の使い方ガイド</span>
-        </button>
-      </div>
+              <div id="sidebar-pinned-list" class="hidden" style="display:flex;flex-direction:column;gap:2px;margin-top:2px;"></div>
             </div>
           </nav>
         </div>
@@ -890,47 +886,7 @@
         </div>
       </div>
 
-      <div id="notes-list-container" class="notes-scroll"><div class="note-card active" data-note-id="note_1794975032408_fzzvd">
-            <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;">
-              <div style="min-width:0;flex:1;">
-                <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
-                  <input type="checkbox" class="note-select-cb" data-id="note_1794975032408_fzzvd" style="flex-shrink:0;">
-                  
-                  <div class="truncate" style="font-size:14px;font-weight:700;color:var(--text-main);">mirai</div>
-                </div>
-                <div class="line-clamp-2" style="font-size:12px;color:var(--text-muted);line-height:1.5;margin-bottom:6px;">
-                  （本文なし）
-                </div>
-                <div style="display:flex;flex-wrap:wrap;align-items:center;gap:5px;font-size:11px;color:var(--text-faint);">
-                  <span title="同期待機中" style="color:var(--amber-500);">●</span>
-                  <span>2026/11/18 13:10</span>
-                  
-                  
-                </div>
-              </div>
-              
-            </div>
-          </div><div class="note-card" data-note-id="note_welcome_guide">
-            <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;">
-              <div style="min-width:0;flex:1;">
-                <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
-                  <input type="checkbox" class="note-select-cb" data-id="note_welcome_guide" style="flex-shrink:0;">
-                  <span style="color:var(--amber-500);font-size:12px;">📌</span>
-                  <div class="truncate" style="font-size:14px;font-weight:700;color:var(--text-main);">ようこそ LooseNote へ！基本の使い方ガイド</div>
-                </div>
-                <div class="line-clamp-2" style="font-size:12px;color:var(--text-muted);line-height:1.5;margin-bottom:6px;">
-                  LooseNote は、PC・Android・iPhone から自分の Googleドライブ へ単一HTML形式で直接保存・同期できる超軽量クラウドノートです。 ✨ 主な特徴 ドラッグ＆ドロップで即ノート化：画像（自動WebP軽量化）・PD
-                </div>
-                <div style="display:flex;flex-wrap:wrap;align-items:center;gap:5px;font-size:11px;color:var(--text-faint);">
-                  <span title="同期待機中" style="color:var(--amber-500);">●</span>
-                  <span>2026/11/18 13:10</span>
-                  
-                  <span class="badge badge-brand">#ガイド</span><span class="badge badge-brand">#クラウド対応</span>
-                </div>
-              </div>
-              
-            </div>
-          </div></div>
+      <div id="notes-list-container" class="notes-scroll"></div>
 
       <div id="bulk-action-bar" class="bulk-bar hidden">
         <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-weight:700;">
@@ -1033,7 +989,7 @@
             <input type="text" id="add-tag-input" placeholder="+ タグを追加 (Enter)" style="font-size:12px;color:var(--text-sub);background:transparent;border:none;outline:none;min-width:130px;padding:3px 0;">
           </div>
 
-          <div id="note-rich-editor" contenteditable="true" data-placeholder="ここに自由にメモを書いたり、スクリーンショット(Ctrl+V)やPDF・画像をドロップして放り込めます...">mirai<p></p></div>
+          <div id="note-rich-editor" contenteditable="true" data-placeholder="ここに自由にメモを書いたり、スクリーンショット(Ctrl+V)やPDF・画像をドロップして放り込めます..."></div>
         </div>
       </div>
     </main>
@@ -1114,8 +1070,6 @@
       themeIconMoon: document.getElementById('theme-icon-moon'),
       closeSidebarBtn: document.getElementById('close-sidebar-btn'),
       newNoteBtn: document.getElementById('new-note-btn'),
-      storageBadge: document.getElementById('storage-badge'),
-      lruCacheStatusBadge: document.getElementById('lru-cache-status-badge'),
       storageFolderName: document.getElementById('storage-folder-name'),
       totalDataSizeBadge: document.getElementById('total-data-size-badge'),
       syncProgressBox: document.getElementById('sync-progress-box'),
@@ -1325,7 +1279,6 @@
       notebooks: [],
       pinnedCollapsed: true,
       collapsedStacks: new Set(),
-      knownStacks: new Set(),
       selectedNoteIds: new Set(),
       activeNoteId: null,
       activeNoteContentId: null,
@@ -1334,6 +1287,7 @@
       loadRequestSeq: 0,
 
       searchQuery: '',
+      fullTextSearchCache: new Map(),
       searchDebounceTimer: null,
       activeFilter: 'all',
       sortField: initialSort.field,
@@ -1347,7 +1301,6 @@
       activeEditorImg: null,
       noteHistory: [],
       wikiLinkState: null,
-      savedEditorRange: null,
 
       gdriveClientId: safeStorage.getItem(LS_CLIENT_ID_KEY) || '',
       gdriveFolderName: safeStorage.getItem(LS_FOLDER_NAME_KEY) || 'LooseNote_Data',
@@ -1364,6 +1317,7 @@
       isEnexImporting: false,
       lastSyncError: '',
       queuedUploadNoteIds: new Set(),
+      cloudUploadTimer: null,
       mobileHistoryPushed: false
     };
 
@@ -1396,19 +1350,25 @@
         let cdOffset = view.getUint32(eocdPos + 16, true);
 
         for (let idx = 0; idx < totalEntries; idx++) {
+          if (cdOffset + 46 > bytes.length) throw new Error('ZIPのCentral Directoryが破損しています');
           if (view.getUint32(cdOffset, true) !== 0x02014b50) break;
           const method = view.getUint16(cdOffset + 10, true);
           const compSize = view.getUint32(cdOffset + 20, true);
           const nameLen = view.getUint16(cdOffset + 28, true);
           const extraLen = view.getUint16(cdOffset + 30, true);
           const commentLen = view.getUint16(cdOffset + 32, true);
+          if (cdOffset + 46 + nameLen + extraLen + commentLen > bytes.length) {
+            throw new Error('ZIPエントリ情報がバッファ範囲を超えています');
+          }
           const localOffset = view.getUint32(cdOffset + 42, true);
           const entryName = decoder.decode(bytes.subarray(cdOffset + 46, cdOffset + 46 + nameLen));
 
           if (!entryName.endsWith('/') && /\.(html|htm)$/i.test(entryName)) {
+            if (localOffset + 30 > bytes.length) throw new Error('ZIPのローカルヘッダが破損しています');
             const lNameLen = view.getUint16(localOffset + 26, true);
             const lExtraLen = view.getUint16(localOffset + 28, true);
             const dataStart = localOffset + 30 + lNameLen + lExtraLen;
+            if (dataStart + compSize > bytes.length) throw new Error('ZIPの圧縮データ範囲が破損しています');
             const compData = bytes.subarray(dataStart, dataStart + compSize);
             let rawBytes = null;
             if (method === 0) rawBytes = compData;
@@ -1519,8 +1479,23 @@
       }, 4200);
     }
 
+    let activeModalResolve = null;
+
+    function closeActiveCustomModal(val = null) {
+      el.customModal.classList.add('hidden');
+      if (activeModalResolve) {
+        const resolveFn = activeModalResolve;
+        activeModalResolve = null;
+        resolveFn(val);
+      }
+    }
+
     function openCustomModal({ title, message, bodyHtml = '', actions = [] }) {
+      if (activeModalResolve) {
+        closeActiveCustomModal(null);
+      }
       return new Promise((resolve) => {
+        activeModalResolve = resolve;
         el.modalTitle.textContent = title;
         el.modalMessage.textContent = message || '';
         el.modalMessage.classList.toggle('hidden', !message);
@@ -1529,8 +1504,7 @@
         el.modalActions.innerHTML = '';
 
         const close = (val) => {
-          el.customModal.classList.add('hidden');
-          resolve(val);
+          closeActiveCustomModal(val);
         };
 
         actions.forEach(act => {
@@ -1563,6 +1537,7 @@
     const META_STORE = 'notes_meta';
     const BODY_STORE = 'notes_body';
     const APP_META_STORE = 'app_meta';
+    const fallbackMetaStore = new Map();
     const fallbackBodyStore = new Map();
     const fallbackAppMetaStore = new Map();
 
@@ -1621,6 +1596,11 @@
       const plainText = stripHtmlToText(content);
       const searchSnippet = plainText.slice(0, SEARCH_INDEX_MAX_CHARS);
       const charCount = fullNote.charCount !== undefined ? fullNote.charCount : plainText.length;
+      if (plainText.length > SEARCH_INDEX_MAX_CHARS) {
+        state.fullTextSearchCache.set(fullNote.id, plainText.toLowerCase());
+      } else {
+        state.fullTextSearchCache.delete(fullNote.id);
+      }
       const byteSize = new Blob([content]).size;
       const meta = {
         id: fullNote.id,
@@ -1654,21 +1634,44 @@
       return new Promise((resolve, reject) => {
         const tx = db.transaction(META_STORE, 'readonly');
         const req = tx.objectStore(META_STORE).getAll();
-        req.onsuccess = () => resolve(req.result || []);
+        req.onsuccess = () => {
+          const list = req.result || [];
+          list.forEach(m => fallbackMetaStore.set(m.id, { ...m }));
+          resolve(list);
+        };
         req.onerror = () => reject(req.error);
       });
     }
 
+    function updateFullTextCacheFromContent(noteId, content) {
+      if (!content) return;
+      const plainText = stripHtmlToText(content);
+      if (plainText.length > SEARCH_INDEX_MAX_CHARS) {
+        state.fullTextSearchCache.set(noteId, plainText.toLowerCase());
+      } else {
+        state.fullTextSearchCache.delete(noteId);
+      }
+    }
+
     async function loadNoteBodyFromDB(noteId) {
       if (fallbackBodyStore.has(noteId)) {
-        return fallbackBodyStore.get(noteId);
+        const cached = fallbackBodyStore.get(noteId);
+        updateFullTextCacheFromContent(noteId, cached);
+        return cached;
       }
       try {
         const db = await openAppDB();
         return await new Promise((resolve, reject) => {
           const tx = db.transaction(BODY_STORE, 'readonly');
           const req = tx.objectStore(BODY_STORE).get(noteId);
-          req.onsuccess = () => resolve(req.result ? req.result.content : null);
+          req.onsuccess = () => {
+            const content = req.result ? req.result.content : null;
+            if (content !== null) {
+              fallbackBodyStore.set(noteId, content);
+              updateFullTextCacheFromContent(noteId, content);
+            }
+            resolve(content);
+          };
           req.onerror = () => reject(req.error);
         });
       } catch {
@@ -1677,6 +1680,7 @@
     }
 
     async function saveNoteMetaAndBodyToDB(meta, body = null, skipLruTrim = false) {
+      fallbackMetaStore.set(meta.id, { ...meta });
       if (body) fallbackBodyStore.set(meta.id, body.content);
       try {
         const db = await openAppDB();
@@ -1688,8 +1692,8 @@
           tx.oncomplete = () => resolve();
           tx.onerror = () => reject(tx.error);
         });
-      } catch {
-        // サンドボックス環境ではメモリフォールバックで継続
+      } catch (err) {
+        throw err;
       }
       if (body && !skipLruTrim) {
         enforceLruBodyCacheLimit().catch(() => {});
@@ -1763,7 +1767,9 @@
     }
 
     async function deleteNoteFromDB(id) {
+      fallbackMetaStore.delete(id);
       fallbackBodyStore.delete(id);
+      state.fullTextSearchCache.delete(id);
       try {
         const db = await openAppDB();
         return await new Promise((resolve, reject) => {
@@ -2211,22 +2217,9 @@
         await ensureValidGdriveToken('');
         state.gdriveRootFolderId = await findOrCreateGdriveFolder(state.gdriveFolderName, null);
 
-        const dirtyNotes = state.notes.filter(n => !n.trashed && (n.syncStatus === 'dirty' || n.syncStatus === 'local_only'));
-        if (dirtyNotes.length > 0) {
-          setSyncProgress(true, `端末の変更をアップロード中 (0/${dirtyNotes.length})`, 15);
-          await runConcurrentQueue(dirtyNotes, SYNC_CONCURRENCY_LIMIT, async (noteMeta) => {
-            const body = (noteMeta.id === state.activeNoteContentId)
-              ? state.activeNoteContent
-              : (await loadNoteBodyFromDB(noteMeta.id)) || '<p></p>';
-            await uploadNoteHtmlToGdrive(noteMeta, body);
-          }, (done, total) => {
-            setSyncProgress(true, `端末の変更をアップロード中 (${done}/${total})`, 15 + Math.round((done / total) * 25));
-          });
-        }
-
         if (state.abortSyncRequested) throw new Error('同期が中断されました');
 
-        setSyncProgress(true, 'ノートブック階層を取得中...', 45);
+        setSyncProgress(true, 'ノートブック階層を取得中...', 15);
         const folderPathMap = await buildGdriveFolderTreeMap(state.gdriveRootFolderId);
 
         const savedPageToken = forceFullScan ? null : await getAppMeta('gdrive_changes_page_token');
@@ -2256,15 +2249,44 @@
             pageToken = data.nextPageToken || null;
           } while (pageToken);
 
+          const remoteFileIds = new Set(allRemoteFiles.map(({ file }) => file.id));
+          for (let i = state.notes.length - 1; i >= 0; i--) {
+            const localNote = state.notes[i];
+            if (!localNote.gdriveFileId || remoteFileIds.has(localNote.gdriveFileId)) continue;
+            if (localNote.syncStatus === 'dirty') {
+              localNote.gdriveFileId = null;
+              localNote.gdriveMd5 = null;
+              localNote.syncStatus = 'local_only';
+              await saveNoteMetaAndBodyToDB(localNote, null, true);
+            } else {
+              const removedId = localNote.id;
+              await deleteNoteFromDB(removedId);
+              state.notes.splice(i, 1);
+              if (state.activeNoteId === removedId) {
+                state.activeNoteId = null;
+                state.activeNoteContentId = null;
+                showEmptyEditor();
+              }
+              deletedCount++;
+            }
+          }
+
           const toDownload = allRemoteFiles.filter(({ file }) => {
             const local = state.notes.find(n => n.gdriveFileId === file.id);
             if (!local) return true;
-            if (local.gdriveMd5 && file.md5Checksum && local.gdriveMd5 === file.md5Checksum) return false;
+            if (local.gdriveMd5 && file.md5Checksum && local.gdriveMd5 === file.md5Checksum) {
+              const latestNb = folderPathMap.get(file.parents && file.parents[0]) || '';
+              if (local.notebook !== latestNb) {
+                local.notebook = latestNb;
+                saveNoteMetaAndBodyToDB(local, null, true).catch(() => {});
+              }
+              return false;
+            }
             return true;
           });
 
           if (toDownload.length > 0) {
-            setSyncProgress(true, `クラウドのノートを受信中 (0/${toDownload.length})`, 55);
+            setSyncProgress(true, `クラウドのノートを受信中 (0/${toDownload.length})`, 30);
             await runConcurrentQueue(toDownload, SYNC_CONCURRENCY_LIMIT, async ({ file, notebookPath }) => {
               const rawHtml = await downloadNoteHtmlFromGdrive(file.id);
               const parsed = parseStandaloneHtmlToNote(rawHtml, file.name, {
@@ -2307,13 +2329,13 @@
               }
               downloadedCount++;
             }, (done, total) => {
-              setSyncProgress(true, `クラウドのノートを受信中 (${done}/${total})`, 55 + Math.round((done / total) * 40));
+              setSyncProgress(true, `クラウドのノートを受信中 (${done}/${total})`, 30 + Math.round((done / total) * 35));
             });
           }
 
           if (newStartToken) await setAppMeta('gdrive_changes_page_token', newStartToken);
         } else {
-          setSyncProgress(true, '差分変更(Changes API)を確認中...', 60);
+          setSyncProgress(true, '差分変更(Changes API)を確認中...', 30);
           let currentToken = savedPageToken;
           let latestStartToken = null;
           const changedItems = [];
@@ -2333,15 +2355,23 @@
             const localIdx = state.notes.findIndex(n => n.gdriveFileId === ch.fileId);
             if (ch.removed || (ch.file && ch.file.trashed)) {
               if (localIdx !== -1) {
-                const removedId = state.notes[localIdx].id;
-                await deleteNoteFromDB(removedId);
-                state.notes.splice(localIdx, 1);
-                if (state.activeNoteId === removedId) {
-                  state.activeNoteId = null;
-                  state.activeNoteContentId = null;
-                  showEmptyEditor();
+                const targetNote = state.notes[localIdx];
+                if (targetNote.syncStatus === 'dirty') {
+                  targetNote.gdriveFileId = null;
+                  targetNote.gdriveMd5 = null;
+                  targetNote.syncStatus = 'local_only';
+                  await saveNoteMetaAndBodyToDB(targetNote, null, true);
+                } else {
+                  const removedId = targetNote.id;
+                  await deleteNoteFromDB(removedId);
+                  state.notes.splice(localIdx, 1);
+                  if (state.activeNoteId === removedId) {
+                    state.activeNoteId = null;
+                    state.activeNoteContentId = null;
+                    showEmptyEditor();
+                  }
+                  deletedCount++;
                 }
-                deletedCount++;
               }
               continue;
             }
@@ -2362,7 +2392,7 @@
           }
 
           if (toFetch.length > 0) {
-            setSyncProgress(true, `更新されたノートを取得中 (0/${toFetch.length})`, 75);
+            setSyncProgress(true, `更新されたノートを取得中 (0/${toFetch.length})`, 40);
             await runConcurrentQueue(toFetch, SYNC_CONCURRENCY_LIMIT, async ({ file, notebookPath }) => {
               const rawHtml = await downloadNoteHtmlFromGdrive(file.id);
               const parsed = parseStandaloneHtmlToNote(rawHtml, file.name, {
@@ -2405,11 +2435,26 @@
               }
               downloadedCount++;
             }, (done, total) => {
-              setSyncProgress(true, `更新されたノートを取得中 (${done}/${total})`, 75 + Math.round((done / total) * 20));
+              setSyncProgress(true, `更新されたノートを取得中 (${done}/${total})`, 40 + Math.round((done / total) * 25));
             });
           }
 
           if (latestStartToken) await setAppMeta('gdrive_changes_page_token', latestStartToken);
+        }
+
+        if (state.abortSyncRequested) throw new Error('同期が中断されました');
+
+        const dirtyNotes = state.notes.filter(n => !n.trashed && (n.syncStatus === 'dirty' || n.syncStatus === 'local_only'));
+        if (dirtyNotes.length > 0) {
+          setSyncProgress(true, `端末の変更をアップロード中 (0/${dirtyNotes.length})`, 70);
+          await runConcurrentQueue(dirtyNotes, SYNC_CONCURRENCY_LIMIT, async (noteMeta) => {
+            const body = (noteMeta.id === state.activeNoteContentId)
+              ? state.activeNoteContent
+              : (await loadNoteBodyFromDB(noteMeta.id)) || '<p></p>';
+            await uploadNoteHtmlToGdrive(noteMeta, body);
+          }, (done, total) => {
+            setSyncProgress(true, `端末の変更をアップロード中 (${done}/${total})`, 70 + Math.round((done / total) * 25));
+          });
         }
 
         await enforceLruBodyCacheLimit();
@@ -2598,6 +2643,10 @@
         const xmlText = await file.text();
         const parser = new DOMParser();
         const xmlDoc = parser.parseFromString(xmlText, 'text/xml');
+        const parseErr = xmlDoc.querySelector('parsererror');
+        if (parseErr) {
+          throw new Error(`ENEXのXML構文が破損しています: ${(parseErr.textContent || '').trim().slice(0, 100)}`);
+        }
         const noteNodes = Array.from(xmlDoc.getElementsByTagName('note'));
         if (noteNodes.length === 0) throw new Error('ENEX内にノートが見つかりませんでした');
 
@@ -2703,6 +2752,7 @@
           meta.thumbnail = await generateThumbnailDataUrl(fullNote.content);
           await saveNoteMetaAndBodyToDB(meta, body, true);
           state.notes.push(meta);
+          enqueueCloudUpload(meta.id);
           imported++;
 
           if (i % 5 === 0) {
@@ -2742,6 +2792,10 @@
               setSyncProgress(true, `ZIPを展開中: ${file.name}`, 30);
               const buf = await file.arrayBuffer();
               const entries = await StandaloneZip.extractHtmlFilesFromZip(buf);
+              if (entries.length === 0) {
+                showToast('ZIP内にインポート可能なHTMLノートが見つかりませんでした', 'warning');
+                continue;
+              }
               for (const entry of entries) {
                 const parsed = parseStandaloneHtmlToNote(entry.content, entry.name.split('/').pop(), { syncStatus: 'local_only' });
                 const pathParts = entry.name.split('/').filter(Boolean);
@@ -2752,6 +2806,7 @@
                 meta.thumbnail = await generateThumbnailDataUrl(parsed.content);
                 await saveNoteMetaAndBodyToDB(meta, body, true);
                 state.notes.push(meta);
+                enqueueCloudUpload(meta.id);
               }
               await enforceLruBodyCacheLimit();
               rebuildNotebooksFromNotes();
@@ -2769,6 +2824,7 @@
             meta.thumbnail = await generateThumbnailDataUrl(parsed.content);
             await saveNoteMetaAndBodyToDB(meta, body, true);
             state.notes.push(meta);
+            enqueueCloudUpload(meta.id);
             rebuildNotebooksFromNotes();
             renderAll();
             await selectNote(meta.id);
@@ -2850,7 +2906,7 @@
         <button type="button" class="loosenote-edit-link-card-btn" contenteditable="false">✎ 編集</button>
         <div style="font-size:11px;font-weight:700;color:#0284c7;margin-bottom:3px;">☁️ Google Drive 外部リンクカード</div>
         <div style="font-size:14px;font-weight:700;margin-bottom:4px;"><a href="${safeUrl}" target="_blank" rel="noopener noreferrer">${safeTitle}</a></div>
-        ${safeMemo ? `<div style="font-size:12px;color:#44403c;margin-bottom:6px;">${safeMemo}</div>` : ''}
+        ${safeMemo ? `<div class="loosenote-link-card-memo" style="font-size:12px;color:#44403c;margin-bottom:6px;">${safeMemo}</div>` : ''}
         <div style="font-size:11px;color:#0369a1;background:#ffffff;border:1px solid #e0f2fe;border-radius:6px;padding:4px 8px;word-break:break-all;">${safeUrl}</div>
       `;
 
@@ -2872,7 +2928,10 @@
     async function openDriveLinkCardModal(defaultTitle = '', existingCard = null) {
       const currentTitle = existingCard ? (existingCard.querySelector('a')?.textContent || defaultTitle) : defaultTitle;
       const currentUrl = existingCard ? (existingCard.querySelector('a')?.getAttribute('href') || '') : '';
-      const currentMemo = existingCard && existingCard.children.length >= 5 ? existingCard.children[3].textContent : '';
+      const memoEl = existingCard ? existingCard.querySelector('.loosenote-link-card-memo') : null;
+      const currentMemo = memoEl
+        ? memoEl.textContent
+        : (existingCard && existingCard.children.length >= 5 ? existingCard.children[3].textContent : '');
 
       await openCustomModal({
         title: existingCard ? '🔗 Googleドライブリンクカードを編集' : '🔗 Googleドライブリンクカードを挿入',
@@ -2981,14 +3040,17 @@
       return state.notes.find(n => n.id === state.activeNoteId) || null;
     }
 
-    async function selectNote(noteId, pushHistory = true) {
+    async function selectNote(noteId, pushHistory = true, notifyIfMissing = false) {
       if (!noteId) return;
       if (state.pendingSaveNoteId && state.pendingSaveNoteId !== noteId) {
         await flushPendingSave();
       }
 
       const meta = state.notes.find(n => n.id === noteId);
-      if (!meta) return;
+      if (!meta) {
+        if (notifyIfMissing) showToast('リンク先のノートは既に削除されているため開けません', 'warning');
+        return;
+      }
 
       state.activeEditorImg = null;
       el.imageFloatingToolbar.classList.add('hidden');
@@ -3075,6 +3137,7 @@
       el.activeEditorContainer.classList.add('hidden');
       el.editorPane.classList.remove('mobile-open');
       document.querySelector('.workspace')?.classList.remove('mobile-editor-open');
+      state.mobileHistoryPushed = false;
     }
 
     async function createBlankNote(initialTitle = '') {
@@ -3139,6 +3202,11 @@
       meta.hasMedia = detectHasMedia(htmlContent);
       meta.snippet = plainText.slice(0, 120);
       meta.searchSnippet = plainText.slice(0, SEARCH_INDEX_MAX_CHARS);
+      if (plainText.length > SEARCH_INDEX_MAX_CHARS) {
+        state.fullTextSearchCache.set(meta.id, plainText.toLowerCase());
+      } else {
+        state.fullTextSearchCache.delete(meta.id);
+      }
       meta.bodyCached = true;
       meta.lastAccessedAt = Date.now();
       meta.syncStatus = 'dirty';
@@ -3146,11 +3214,19 @@
       state.activeNoteContentId = meta.id;
       state.activeNoteContent = htmlContent;
 
-      if (meta.hasMedia && !meta.thumbnail) {
+      if (meta.hasMedia) {
         meta.thumbnail = await generateThumbnailDataUrl(htmlContent);
+      } else {
+        meta.thumbnail = '';
       }
 
-      await saveNoteMetaAndBodyToDB(meta, { id: meta.id, content: htmlContent, cachedAt: Date.now() }, false);
+      try {
+        await saveNoteMetaAndBodyToDB(meta, { id: meta.id, content: htmlContent, cachedAt: Date.now() }, false);
+      } catch (err) {
+        console.error('ローカルDB保存失敗:', err);
+        el.saveStatusIndicator.innerHTML = `<span style="width:8px;height:8px;border-radius:50%;background:var(--red-600);"></span> 端末保存失敗（容量不足等）`;
+        showToast('端末内ストレージへの保存に失敗しました。空き容量を確認してください。', 'error');
+      }
       updateEditorHeaderMeta(meta);
       updateTotalSizeBadge();
       renderNotesList();
@@ -3163,7 +3239,8 @@
     function enqueueCloudUpload(noteId) {
       if (!state.gdriveClientId) return;
       state.queuedUploadNoteIds.add(noteId);
-      setTimeout(async () => {
+      clearTimeout(state.cloudUploadTimer);
+      state.cloudUploadTimer = setTimeout(async () => {
         if (!isGdriveConnected() || state.isGdriveSyncing) return;
         const ids = Array.from(state.queuedUploadNoteIds);
         state.queuedUploadNoteIds.clear();
@@ -3191,9 +3268,37 @@
     /* ==========================================================================
        10. 高速検索＆ソート＆段階描画（単一キャッシュ検索ロジック）
        ========================================================================== */
+    let isWarmingSearchCache = false;
+
+    function clearPendingSearchDebounce() {
+      if (state.searchDebounceTimer) {
+        clearTimeout(state.searchDebounceTimer);
+        state.searchDebounceTimer = null;
+        state.searchQuery = el.searchInput.value;
+      }
+    }
+
+    async function warmLongNotesSearchCache() {
+      if (isWarmingSearchCache) return;
+      const targets = state.notes.filter(n => n.charCount > SEARCH_INDEX_MAX_CHARS && n.bodyCached && !state.fullTextSearchCache.has(n.id));
+      if (targets.length === 0) return;
+      isWarmingSearchCache = true;
+      try {
+        for (const n of targets) {
+          await loadNoteBodyFromDB(n.id);
+        }
+        if (state.searchQuery.trim()) renderNotesList();
+      } finally {
+        isWarmingSearchCache = false;
+      }
+    }
+
     function getFilteredAndSortedNotes() {
       const q = state.searchQuery.trim().toLowerCase();
       const tokens = q ? q.split(/\s+/).filter(Boolean) : [];
+      if (tokens.length > 0) {
+        warmLongNotesSearchCache().catch(() => {});
+      }
 
       const filtered = state.notes.filter(n => {
         if (state.activeFilter === 'trash') {
@@ -3211,7 +3316,8 @@
         }
 
         if (tokens.length > 0) {
-          const haystack = `${n.title || ''}\n${n.notebook || ''}\n${(n.tags || []).join(' ')}\n${n.searchSnippet || n.snippet || ''}`.toLowerCase();
+          const bodyIndex = state.fullTextSearchCache.get(n.id) || n.searchSnippet || n.snippet || '';
+          const haystack = `${n.title || ''}\n${n.notebook || ''}\n${(n.tags || []).join(' ')}\n${bodyIndex}`.toLowerCase();
           for (const tk of tokens) {
             if (!haystack.includes(tk)) return false;
           }
@@ -3255,6 +3361,7 @@
     }
 
     function setSortOptions(nextField, nextDir) {
+      clearPendingSearchDebounce();
       if (VALID_SORT_FIELDS.includes(nextField)) state.sortField = nextField;
       if (VALID_SORT_DIRS.includes(nextDir)) state.sortDir = nextDir;
       safeStorage.setItem(LS_SORT_FIELD_KEY, state.sortField);
@@ -3498,6 +3605,7 @@
     }
 
     function setActiveFilter(filterKey) {
+      clearPendingSearchDebounce();
       state.activeFilter = filterKey;
       state.renderedListCount = LIST_PAGE_SIZE;
       state.selectedNoteIds.clear();
@@ -3556,36 +3664,21 @@
     }
 
     function updateLruStatusBadge() {
-      if (!el.lruCacheStatusBadge) return;
-      const cached = state.notes.filter(n => n.bodyCached).length;
-      const maxLru = getMaxLruCachedNotes();
-      el.lruCacheStatusBadge.textContent = `本文キャッシュ: ${cached}/${maxLru}件`;
+      // メタデータおよびキャッシュ上限の整合維持用フック
     }
 
     function updateGdriveStatusUI() {
       const connected = isGdriveConnected();
       const hasClientId = Boolean(state.gdriveClientId);
       if (connected) {
-        if (el.storageBadge) {
-          el.storageBadge.textContent = 'Google Drive 同期中';
-          el.storageBadge.className = 'badge badge-sky';
-        }
         el.storageFolderName.textContent = `📁 ${state.gdriveFolderName}`;
         el.connectGdriveBtnText.textContent = 'Googleドライブ接続済み';
         el.syncGdriveNowBtn.classList.remove('hidden');
       } else if (hasClientId) {
-        if (el.storageBadge) {
-          el.storageBadge.textContent = 'Google Drive 未認証';
-          el.storageBadge.className = 'badge badge-amber';
-        }
         el.storageFolderName.textContent = `📁 ${state.gdriveFolderName}（要ログイン）`;
         el.connectGdriveBtnText.textContent = 'Googleドライブに再接続';
         el.syncGdriveNowBtn.classList.remove('hidden');
       } else {
-        if (el.storageBadge) {
-          el.storageBadge.textContent = 'ブラウザ内保存のみ';
-          el.storageBadge.className = 'badge badge-muted';
-        }
         el.storageFolderName.textContent = 'PC・スマホから直接クラウド同期';
         el.connectGdriveBtnText.textContent = 'Googleドライブに接続';
         el.syncGdriveNowBtn.classList.add('hidden');
@@ -3644,7 +3737,7 @@
         listEl.querySelectorAll('[data-pick-id]').forEach(btn => {
           btn.addEventListener('click', () => {
             const target = candidates.find(c => c.id === btn.dataset.pickId);
-            el.customModal.classList.add('hidden');
+            closeActiveCustomModal(null);
             if (target) insertInternalNoteLinkChip(target);
           });
         });
@@ -3677,7 +3770,7 @@
         `).join('');
         listEl.querySelectorAll('[data-jump-id]').forEach(btn => {
           btn.addEventListener('click', () => {
-            el.customModal.classList.add('hidden');
+            closeActiveCustomModal(null);
             selectNote(btn.dataset.jumpId);
           });
         });
@@ -3863,6 +3956,7 @@
         }, 120);
       });
       el.clearSearchBtn.addEventListener('click', () => {
+        clearPendingSearchDebounce();
         el.searchInput.value = '';
         el.clearSearchBtn.classList.add('hidden');
         state.searchQuery = '';
@@ -3905,6 +3999,14 @@
         if (state.mobileHistoryPushed) {
           state.mobileHistoryPushed = false;
           closeMobileEditorView(true);
+        }
+      });
+
+      window.addEventListener('resize', () => {
+        if (!isMobileViewport()) {
+          el.editorPane.classList.remove('mobile-open');
+          document.querySelector('.workspace')?.classList.remove('mobile-editor-open');
+          state.mobileHistoryPushed = false;
         }
       });
 
@@ -3957,7 +4059,11 @@
         if (!meta) return;
         meta.trashed = false;
         meta.syncStatus = 'dirty';
-        await saveNoteMetaAndBodyToDB(meta, null, true);
+        try {
+          await saveNoteMetaAndBodyToDB(meta, null, true);
+        } catch (err) {
+          console.warn('復元メタデータ保存エラー:', err);
+        }
         updatePinAndTrashUI(meta);
         renderSidebar();
         renderNotesList();
@@ -4006,6 +4112,8 @@
         state.notes = state.notes.filter(n => !n.trashed);
         if (state.activeNoteId && trashed.some(t => t.id === state.activeNoteId)) {
           state.activeNoteId = null;
+          state.activeNoteContentId = null;
+          state.activeNoteContent = '<p></p>';
           showEmptyEditor();
         }
         renderAll();
@@ -4041,7 +4149,7 @@
                   if (m) {
                     m.notebook = targetNb;
                     m.syncStatus = 'dirty';
-                    await saveNoteMetaAndBodyToDB(m, null, true);
+                    await saveNoteMetaAndBodyToDB(m, null, true).catch(() => {});
                     enqueueCloudUpload(m.id);
                   }
                 }
@@ -4060,31 +4168,28 @@
         const ids = Array.from(state.selectedNoteIds);
         if (ids.length === 0) return;
         await openCustomModal({
-          title: `🏷️ ${ids.length}件のノートへ一括タグ追加`,
-          bodyHtml: `
-            <label class="field-label">追加するタグ（カンマまたはスペース区切り）</label>
-            <input type="text" id="modal-bulk-tags" class="field-input" placeholder="重要, 2026資料">
-          `,
+          title: `🏷️ ${ids.length}件のノートにタグ一括付与`,
+          bodyHtml: `<input type="text" id="modal-bulk-tag" class="field-input" placeholder="追加するタグ名（カンマ区切り可）">`,
           actions: [
             {
               label: 'タグを追加',
               className: 'btn btn-brand',
               onClick: async (bodyEl) => {
-                const raw = bodyEl.querySelector('#modal-bulk-tags').value;
-                const newTags = raw.split(/[,\s]+/).map(s => s.replace(/^#/, '').trim()).filter(Boolean);
-                if (newTags.length === 0) return;
+                const raw = bodyEl.querySelector('#modal-bulk-tag').value;
+                const newTags = raw.split(/[,、\s]+/).map(s => s.replace(/^#/, '').trim()).filter(Boolean);
+                if (newTags.length === 0) return false;
                 for (const id of ids) {
                   const m = state.notes.find(n => n.id === id);
                   if (m) {
                     m.tags = Array.from(new Set([...(m.tags || []), ...newTags]));
                     m.syncStatus = 'dirty';
-                    await saveNoteMetaAndBodyToDB(m, null, true);
+                    await saveNoteMetaAndBodyToDB(m, null, true).catch(() => {});
                     enqueueCloudUpload(m.id);
                   }
                 }
                 state.selectedNoteIds.clear();
                 renderAll();
-                showToast(`${ids.length}件にタグを追加しました`, 'success');
+                showToast(`${ids.length}件にタグを付与しました`, 'success');
               }
             },
             { label: 'キャンセル', className: 'btn btn-muted', value: 'cancel' }
@@ -4100,19 +4205,24 @@
           if (m) {
             m.trashed = true;
             m.pinned = false;
-            await saveNoteMetaAndBodyToDB(m, null, true);
-            if (m.gdriveFileId) trashOrDeleteGdriveFile(m.gdriveFileId);
+            await saveNoteMetaAndBodyToDB(m, null, true).catch(() => {});
+            if (m.gdriveFileId) await trashOrDeleteGdriveFile(m.gdriveFileId);
           }
         }
         state.selectedNoteIds.clear();
         renderAll();
-        showToast(`${ids.length}件をゴミ箱へ移動しました`, 'info');
+        showToast(`${ids.length}件のノートをゴミ箱へ移動しました`, 'info');
       });
 
       // エディタ入力・書式ツールバー
       el.noteTitleInput.addEventListener('input', scheduleSaveActiveNote);
-      el.noteRichEditor.addEventListener('input', () => {
+      el.noteRichEditor.addEventListener('input', (e) => {
         scheduleSaveActiveNote();
+        if (!e.isComposing) {
+          checkWikiLinkTrigger();
+        }
+      });
+      el.noteRichEditor.addEventListener('compositionend', () => {
         checkWikiLinkTrigger();
       });
       el.noteRichEditor.addEventListener('change', (e) => {
@@ -4121,17 +4231,28 @@
         }
       });
 
+      el.noteRichEditor.addEventListener('paste', async (e) => {
+        const items = Array.from(e.clipboardData?.items || []);
+        const imageItem = items.find(it => it.type.startsWith('image/'));
+        if (imageItem) {
+          e.preventDefault();
+          const file = imageItem.getAsFile();
+          if (file) await embedFileIntoActiveEditor(file);
+        }
+      });
+
       el.addTagInput.addEventListener('keydown', (e) => {
         if (e.key === 'Enter') {
           e.preventDefault();
           const meta = getActiveNoteMeta();
-          const tag = el.addTagInput.value.replace(/^#/, '').trim();
-          if (meta && tag) {
-            meta.tags = Array.from(new Set([...(meta.tags || []), tag]));
-            el.addTagInput.value = '';
+          const val = el.addTagInput.value.replace(/^#/, '').trim();
+          if (!meta || !val) return;
+          if (!meta.tags.includes(val)) {
+            meta.tags.push(val);
             renderActiveNoteTags(meta);
             scheduleSaveActiveNote();
           }
+          el.addTagInput.value = '';
         }
       });
 
@@ -4139,21 +4260,21 @@
         const meta = getActiveNoteMeta();
         if (!meta) return;
         const d = new Date(meta.created);
-        const localIso = new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+        const pad = (n) => String(n).padStart(2, '0');
+        const localVal = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
         await openCustomModal({
           title: '📅 作成日時の変更',
-          bodyHtml: `<input type="datetime-local" id="modal-created-dt" class="field-input" value="${localIso}">`,
+          bodyHtml: `<input type="datetime-local" id="modal-created-dt" class="field-input" value="${localVal}">`,
           actions: [
             {
-              label: '更新する',
+              label: '変更する',
               className: 'btn btn-brand',
               onClick: (bodyEl) => {
-                const val = bodyEl.querySelector('#modal-created-dt').value;
-                if (val) {
-                  meta.created = new Date(val).toISOString();
-                  updateEditorHeaderMeta(meta);
-                  scheduleSaveActiveNote();
-                }
+                const v = bodyEl.querySelector('#modal-created-dt').value;
+                if (!v) return false;
+                meta.created = new Date(v).toISOString();
+                updateEditorHeaderMeta(meta);
+                scheduleSaveActiveNote();
               }
             },
             { label: 'キャンセル', className: 'btn btn-muted', value: 'cancel' }
@@ -4164,6 +4285,9 @@
       el.editorToolbar.querySelectorAll('.toolbar-btn').forEach(btn => {
         btn.addEventListener('mousedown', (e) => {
           e.preventDefault();
+          if (document.activeElement !== el.noteRichEditor) {
+            el.noteRichEditor.focus();
+          }
           const cmd = btn.dataset.cmd;
           const val = btn.dataset.val || null;
           document.execCommand(cmd, false, val);
@@ -4171,18 +4295,16 @@
         });
       });
 
-      el.insertCheckboxBtn.addEventListener('mousedown', (e) => {
-        e.preventDefault();
+      el.insertCheckboxBtn.addEventListener('click', () => {
         const div = document.createElement('div');
-        div.innerHTML = `<input type="checkbox"> <span>タスク項目</span>`;
+        div.innerHTML = `<label style="display:inline-flex;align-items:center;gap:6px;"><input type="checkbox"> <span>タスク項目</span></label>`;
         insertNodeAtEditorCursor(div);
         scheduleSaveActiveNote();
       });
 
-      el.insertTableBtn.addEventListener('mousedown', (e) => {
-        e.preventDefault();
+      el.insertTableBtn.addEventListener('click', () => {
         const table = document.createElement('table');
-        table.innerHTML = `<thead><tr><th>見出し1</th><th>見出し2</th><th>見出し3</th></tr></thead><tbody><tr><td>内容</td><td>内容</td><td>内容</td></tr><tr><td>内容</td><td>内容</td><td>内容</td></tr></tbody>`;
+        table.innerHTML = `<thead><tr><th>項目1</th><th>項目2</th><th>項目3</th></tr></thead><tbody><tr><td><br></td><td><br></td><td><br></td></tr><tr><td><br></td><td><br></td><td><br></td></tr></tbody>`;
         insertNodeAtEditorCursor(table);
         const p = document.createElement('p');
         p.innerHTML = '<br>';
@@ -4192,8 +4314,8 @@
 
       el.embedMediaBtn.addEventListener('click', () => el.embedMediaInput.click());
       el.embedMediaInput.addEventListener('change', async (e) => {
-        for (const f of Array.from(e.target.files || [])) {
-          await embedFileIntoActiveEditor(f);
+        for (const file of Array.from(e.target.files || [])) {
+          await embedFileIntoActiveEditor(file);
         }
         e.target.value = '';
       });
@@ -4201,37 +4323,74 @@
       el.insertLinkCardBtn.addEventListener('click', () => openDriveLinkCardModal(''));
       el.insertNoteLinkBtn.addEventListener('click', showNoteLinkPickerWithFilter);
 
+      const hideImageFloatingToolbar = () => {
+        el.noteRichEditor.querySelectorAll('img.selected-editor-img').forEach(img => img.classList.remove('selected-editor-img'));
+        state.activeEditorImg = null;
+        el.imageFloatingToolbar.classList.add('hidden');
+      };
+
+      const updateImageFloatingToolbarPosition = () => {
+        const img = state.activeEditorImg;
+        if (!img || !img.isConnected) {
+          hideImageFloatingToolbar();
+          return;
+        }
+        const rect = img.getBoundingClientRect();
+        const scrollContainer = el.noteRichEditor.closest('.editor-scroll');
+        if (scrollContainer) {
+          const scRect = scrollContainer.getBoundingClientRect();
+          if (rect.bottom < scRect.top || rect.top > scRect.bottom) {
+            el.imageFloatingToolbar.classList.add('hidden');
+            return;
+          }
+        }
+        el.imageFloatingToolbar.style.left = `${Math.min(window.innerWidth - 260, Math.max(12, rect.left))}px`;
+        el.imageFloatingToolbar.style.top = `${Math.max(56, rect.top - 44)}px`;
+        el.imageFloatingToolbar.classList.remove('hidden');
+      };
+
       // エディタ内クリック（内部リンク遷移・リンクカード編集・画像選択ツールバー）
       el.noteRichEditor.addEventListener('click', (e) => {
         const internalLink = e.target.closest('a.loosenote-internal-link');
         if (internalLink) {
           e.preventDefault();
           const targetId = internalLink.dataset.noteId || (internalLink.getAttribute('href') || '').replace(/^#note:/, '');
-          if (targetId) selectNote(targetId, true);
+          if (targetId) selectNote(targetId, true, true);
           return;
         }
 
         const editCardBtn = e.target.closest('.loosenote-edit-link-card-btn');
         if (editCardBtn) {
           e.preventDefault();
-          const card = editCardBtn.closest('.loosenote-link-card');
-          if (card) openDriveLinkCardModal('', card);
+          const cardEl = editCardBtn.closest('.loosenote-link-card');
+          if (cardEl) openDriveLinkCardModal('', cardEl);
           return;
         }
 
         const clickedImg = e.target.closest('img');
-        el.noteRichEditor.querySelectorAll('img.selected-editor-img').forEach(img => img.classList.remove('selected-editor-img'));
         if (clickedImg) {
+          el.noteRichEditor.querySelectorAll('img.selected-editor-img').forEach(img => img.classList.remove('selected-editor-img'));
           state.activeEditorImg = clickedImg;
           clickedImg.classList.add('selected-editor-img');
-          const rect = clickedImg.getBoundingClientRect();
-          el.imageFloatingToolbar.style.left = `${Math.min(window.innerWidth - 260, Math.max(12, rect.left))}px`;
-          el.imageFloatingToolbar.style.top = `${Math.max(56, rect.top - 44)}px`;
-          el.imageFloatingToolbar.classList.remove('hidden');
+          updateImageFloatingToolbarPosition();
         } else {
-          state.activeEditorImg = null;
-          el.imageFloatingToolbar.classList.add('hidden');
+          hideImageFloatingToolbar();
         }
+      });
+
+      const editorScrollEl = el.noteRichEditor.closest('.editor-scroll');
+      if (editorScrollEl) {
+        editorScrollEl.addEventListener('scroll', () => {
+          if (state.activeEditorImg) updateImageFloatingToolbarPosition();
+        }, { passive: true });
+      }
+      window.addEventListener('resize', () => {
+        if (state.activeEditorImg) updateImageFloatingToolbarPosition();
+      });
+      document.addEventListener('mousedown', (e) => {
+        if (!state.activeEditorImg) return;
+        if (el.noteRichEditor.contains(e.target) || el.imageFloatingToolbar.contains(e.target) || el.imageLightboxModal.contains(e.target)) return;
+        hideImageFloatingToolbar();
       });
 
       el.imageFloatingToolbar.querySelectorAll('[data-img-size]').forEach(btn => {
@@ -4253,55 +4412,46 @@
         if (e.target === el.imageLightboxModal) el.imageLightboxModal.classList.add('hidden');
       });
 
-      // スクリーンショット貼り付け (Ctrl+V)
-      el.noteRichEditor.addEventListener('paste', async (e) => {
-        const items = Array.from(e.clipboardData?.items || []);
-        const imageItems = items.filter(it => it.type.startsWith('image/'));
-        if (imageItems.length > 0) {
-          e.preventDefault();
-          for (const it of imageItems) {
-            const file = it.getAsFile();
-            if (file) await embedFileIntoActiveEditor(file);
-          }
-        }
-      });
-
       // 画面全体＆エディタへのドラッグ＆ドロップ
       let dragCounter = 0;
+      const resetDragOverlayState = () => {
+        dragCounter = 0;
+        el.globalDropOverlay.classList.add('hidden');
+        el.editorPane.classList.remove('editor-drop-active');
+        el.editorDropBanner.classList.add('hidden');
+      };
+
       window.addEventListener('dragenter', (e) => {
         if (!e.dataTransfer?.types?.includes('Files')) return;
         e.preventDefault();
         dragCounter++;
-        const inEditor = el.editorPane.contains(e.target) && state.activeNoteId;
-        if (inEditor) {
-          el.editorPane.classList.add('editor-drop-active');
-          el.editorDropBanner.classList.remove('hidden');
-          el.globalDropOverlay.classList.add('hidden');
-        } else {
-          el.globalDropOverlay.classList.remove('hidden');
-        }
+        const overEditor = el.editorPane.contains(e.target) && Boolean(state.activeNoteId);
+        el.globalDropOverlay.classList.toggle('hidden', overEditor);
+        el.editorPane.classList.toggle('editor-drop-active', overEditor);
+        el.editorDropBanner.classList.toggle('hidden', !overEditor);
       });
       window.addEventListener('dragover', (e) => {
         if (!e.dataTransfer?.types?.includes('Files')) return;
         e.preventDefault();
+        const overEditor = el.editorPane.contains(e.target) && Boolean(state.activeNoteId);
+        el.globalDropOverlay.classList.toggle('hidden', overEditor);
+        el.editorPane.classList.toggle('editor-drop-active', overEditor);
+        el.editorDropBanner.classList.toggle('hidden', !overEditor);
       });
       window.addEventListener('dragleave', (e) => {
         if (!e.dataTransfer?.types?.includes('Files')) return;
         dragCounter = Math.max(0, dragCounter - 1);
-        if (dragCounter === 0) {
-          el.globalDropOverlay.classList.add('hidden');
-          el.editorPane.classList.remove('editor-drop-active');
-          el.editorDropBanner.classList.add('hidden');
+        if (dragCounter === 0 || e.relatedTarget === null) {
+          resetDragOverlayState();
         }
       });
+      window.addEventListener('dragend', resetDragOverlayState);
+      window.addEventListener('blur', resetDragOverlayState);
       window.addEventListener('drop', async (e) => {
         if (!e.dataTransfer?.files?.length) return;
         e.preventDefault();
-        dragCounter = 0;
         const droppedInEditor = el.editorPane.contains(e.target) && Boolean(state.activeNoteId);
-        el.globalDropOverlay.classList.add('hidden');
-        el.editorPane.classList.remove('editor-drop-active');
-        el.editorDropBanner.classList.add('hidden');
+        resetDragOverlayState();
 
         if (droppedInEditor) {
           for (const file of Array.from(e.dataTransfer.files)) {
@@ -4312,15 +4462,19 @@
         }
       });
 
-      // キーボードショートカット (Ctrl+K / Cmd+K / ESC)
+      // キーボードショートカット (Ctrl+K / Escape)
       window.addEventListener('keydown', (e) => {
         if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
           e.preventDefault();
           openQuickJumpModal();
         } else if (e.key === 'Escape') {
+          if (!el.customModal.classList.contains('hidden')) {
+            closeActiveCustomModal(null);
+            return;
+          }
           el.imageLightboxModal.classList.add('hidden');
           el.noteLinkPopup.classList.add('hidden');
-          el.imageFloatingToolbar.classList.add('hidden');
+          hideImageFloatingToolbar();
         }
       });
 
@@ -4329,62 +4483,66 @@
       });
     }
 
+    async function seedWelcomeNoteIfEmpty() {
+      if (state.notes.length > 0) return;
+      const now = new Date().toISOString();
+      const welcome = {
+        id: 'note_welcome_guide',
+        title: 'ようこそ LooseNote へ！基本の使い方ガイド',
+        notebook: '',
+        tags: ['ガイド', 'クラウド対応'],
+        pinned: true,
+        trashed: false,
+        created: now,
+        updated: now,
+        syncStatus: 'local_only',
+        content: `
+          <p><strong>LooseNote</strong> は、PC・Android・iPhone から自分の <strong>Googleドライブ</strong> へ単一HTML形式で直接保存・同期できる超軽量クラウドノートです。</p>
+          <h3>✨ 主な特徴</h3>
+          <ul>
+            <li><strong>ドラッグ＆ドロップで即ノート化</strong>：画像（自動WebP軽量化）・PDF・テキスト・Evernote（<code>.enex</code>）・<code>.zip</code> を画面にドロップするだけで取り込めます。</li>
+            <li><strong>10MB超ファイルのスマート運用</strong>：10MBを超える大容量ファイルはHTMLに直接埋め込まず、Googleドライブ別フォルダ保管＆リンクカード形式でノートの軽快さを維持します。</li>
+            <li><strong>高速検索＆クイックジャンプ</strong>：<code>Ctrl+K</code>（または <code>Cmd+K</code>）や、本文中の <code>[[</code> 入力で他のノートへ瞬時にリンク・移動できます。</li>
+          </ul>
+        `
+      };
+      const { meta, body } = splitNoteToMetaAndBody(welcome);
+      await saveNoteMetaAndBodyToDB(meta, body, true);
+      state.notes.push(meta);
+    }
+
     async function initApp() {
       const savedTheme = safeStorage.getItem('loosenote-theme');
-      const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
-      applyTheme(savedTheme ? savedTheme === 'dark' : prefersDark);
+      const prefersDark = savedTheme ? savedTheme === 'dark' : window.matchMedia('(prefers-color-scheme: dark)').matches;
+      applyTheme(prefersDark);
 
       el.iconViewCompact.classList.toggle('hidden', state.isCompactList);
       el.iconViewCard.classList.toggle('hidden', !state.isCompactList);
       updateSortControlsUI();
-      showEmptyEditor();
 
       bindEvents();
 
       try {
         state.notes = await loadAllNoteMetasFromDB();
       } catch (err) {
-        console.warn('IndexedDB初期化フォールバック:', err);
+        console.warn('IndexedDB 読込フォールバック:', err);
         state.notes = [];
       }
 
-      if (state.notes.length === 0) {
-        const now = new Date().toISOString();
-        const welcomeNote = {
-          id: 'note_welcome_guide',
-          title: 'ようこそ LooseNote へ！基本の使い方ガイド',
-          notebook: '',
-          tags: ['ガイド', 'クラウド対応'],
-          pinned: true,
-          trashed: false,
-          created: now,
-          updated: now,
-          content: `
-            <p><strong>LooseNote</strong> は、PC・Android・iPhone から自分の <strong>Googleドライブ</strong> へ単一HTML形式で直接保存・同期できる超軽量クラウドノートです。</p>
-            <h3>✨ 主な特徴</h3>
-            <ul>
-              <li><strong>ドラッグ＆ドロップで即ノート化</strong>：画像（自動WebP軽量化）・PDF・テキスト・HTMLを画面に放り込むだけでノートを作成します。</li>
-              <li><strong>10MB超ファイル自動ガード</strong>：10MBを超える大容量ファイルはHTML肥大化を防ぐため、Googleドライブの別フォルダ保管＆リンクカード運用へ自動誘導します。</li>
-              <li><strong>Evernote (.enex) / ZIP 一括移行</strong>：過去のノート資産をブラウザだけで高速インポートできます。</li>
-              <li><strong>[[ でノート間リンク</strong>：本文中で <code>[[</code> と入力すると、他のノートへのリンクチップを素早く挿入できます。</li>
-            </ul>
-          `,
-          syncStatus: 'local_only'
-        };
-        const { meta, body } = splitNoteToMetaAndBody(welcomeNote);
-        await saveNoteMetaAndBodyToDB(meta, body, true);
-        state.notes.push(meta);
-      }
-
+      await seedWelcomeNoteIfEmpty();
       rebuildNotebooksFromNotes();
       renderAll();
 
-      const firstVisible = getFilteredAndSortedNotes()[0];
-      if (firstVisible && !isMobileViewport()) {
-        await selectNote(firstVisible.id, false);
+      const firstActive = getFilteredAndSortedNotes()[0] || state.notes.find(n => !n.trashed);
+      if (firstActive && !isMobileViewport()) {
+        await selectNote(firstActive.id, false);
+      } else {
+        showEmptyEditor();
       }
     }
 
     initApp();
   </script>
+
+
 </body></html>
