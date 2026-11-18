@@ -949,7 +949,7 @@
               <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
             </button>
             <button id="delete-note-btn" title="ゴミ箱へ移動" class="btn-icon">
-              <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+              <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a1 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
             </button>
           </div>
         </header>
@@ -1348,6 +1348,22 @@
         return new Uint8Array(await new Response(ds.readable).arrayBuffer());
       }
 
+      function decodeZipEntryName(nameBytes, generalPurposeFlag) {
+        const isUtf8Flag = (generalPurposeFlag & 0x0800) !== 0;
+        if (isUtf8Flag) {
+          return new TextDecoder('utf-8').decode(nameBytes);
+        }
+        try {
+          return new TextDecoder('utf-8', { fatal: true }).decode(nameBytes);
+        } catch {
+          try {
+            return new TextDecoder('shift_jis').decode(nameBytes);
+          } catch {
+            return new TextDecoder('utf-8').decode(nameBytes);
+          }
+        }
+      }
+
       async function extractHtmlFilesFromZip(arrayBuffer) {
         const bytes = new Uint8Array(arrayBuffer);
         const view = new DataView(arrayBuffer);
@@ -1366,6 +1382,7 @@
         for (let idx = 0; idx < totalEntries; idx++) {
           if (cdOffset + 46 > bytes.length) throw new Error('ZIPのCentral Directoryが破損しています');
           if (view.getUint32(cdOffset, true) !== 0x02014b50) break;
+          const flags = view.getUint16(cdOffset + 8, true);
           const method = view.getUint16(cdOffset + 10, true);
           const compSize = view.getUint32(cdOffset + 20, true);
           const nameLen = view.getUint16(cdOffset + 28, true);
@@ -1375,7 +1392,7 @@
             throw new Error('ZIPエントリ情報がバッファ範囲を超えています');
           }
           const localOffset = view.getUint32(cdOffset + 42, true);
-          const entryName = decoder.decode(bytes.subarray(cdOffset + 46, cdOffset + 46 + nameLen));
+          const entryName = decodeZipEntryName(bytes.subarray(cdOffset + 46, cdOffset + 46 + nameLen), flags);
 
           if (!entryName.endsWith('/') && /\.(html|htm)$/i.test(entryName)) {
             if (localOffset + 30 > bytes.length) throw new Error('ZIPのローカルヘッダが破損しています');
@@ -1526,10 +1543,19 @@
           btn.type = 'button';
           btn.textContent = act.label;
           btn.className = act.className || 'btn btn-muted';
-          btn.addEventListener('click', () => {
+          let isHandling = false;
+          btn.addEventListener('click', async () => {
+            if (isHandling) return;
             if (act.onClick) {
-              const res = act.onClick(el.modalBody, close);
-              if (res !== false) close(res !== undefined ? res : act.value);
+              isHandling = true;
+              btn.disabled = true;
+              try {
+                const res = await act.onClick(el.modalBody, close);
+                if (res !== false) close(res !== undefined ? res : act.value);
+              } finally {
+                isHandling = false;
+                if (document.body.contains(btn)) btn.disabled = false;
+              }
             } else {
               close(act.value);
             }
@@ -1678,8 +1704,10 @@
     async function loadNoteBodyFromDB(noteId) {
       if (fallbackBodyStore.has(noteId)) {
         const cached = fallbackBodyStore.get(noteId);
-        updateFullTextCacheFromContent(noteId, cached);
-        return cached;
+        if (cached !== null && cached !== undefined) {
+          updateFullTextCacheFromContent(noteId, cached);
+          return cached;
+        }
       }
       try {
         const db = await openAppDB();
@@ -1688,20 +1716,26 @@
           const req = tx.objectStore(BODY_STORE).get(noteId);
           req.onsuccess = () => {
             const content = req.result ? req.result.content : null;
-            if (content !== null) {
+            if (content !== null && content !== undefined) {
               updateFullTextCacheFromContent(noteId, content);
+              resolve(content);
+            } else {
+              resolve(fallbackBodyStore.get(noteId) ?? null);
             }
-            resolve(content);
           };
           req.onerror = () => reject(req.error);
         });
       } catch {
-        return fallbackBodyStore.get(noteId) || null;
+        return fallbackBodyStore.get(noteId) ?? null;
       }
     }
 
     async function saveNoteMetaAndBodyToDB(meta, body = null, skipLruTrim = false) {
       fallbackMetaStore.set(meta.id, { ...meta });
+      const isUnsynced = meta.syncStatus === 'dirty' || meta.syncStatus === 'local_only';
+      if (body && body.content !== undefined && body.content !== null) {
+        fallbackBodyStore.set(meta.id, body.content);
+      }
       try {
         const db = await openAppDB();
         await new Promise((resolve, reject) => {
@@ -1712,11 +1746,13 @@
           tx.oncomplete = () => resolve();
           tx.onerror = () => reject(tx.error);
         });
-        if (body) {
+        if (body && !isUnsynced) {
           fallbackBodyStore.delete(meta.id);
         }
       } catch (err) {
-        if (body) fallbackBodyStore.set(meta.id, body.content);
+        if (body && body.content !== undefined && body.content !== null) {
+          fallbackBodyStore.set(meta.id, body.content);
+        }
         throw err;
       }
       if (body && !skipLruTrim) {
@@ -1871,6 +1907,7 @@
     .ln-title{font-size:28px;font-weight:700;margin:0 0 8px 0;}
     .ln-meta{font-size:12px;color:#78716c;display:flex;flex-wrap:wrap;gap:10px;align-items:center;}
     .ln-body img{max-width:100%;height:auto;border-radius:10px;}
+    .ln-body a[download]{display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border-radius:8px;background:#f0fdf4;color:#15803d;text-decoration:none;font-weight:600;border:1px solid #bbf7d0;}
     .ln-body pre{background:#f5f5f4;padding:12px;border-radius:8px;overflow-x:auto;}
     .ln-body blockquote{border-left:4px solid #22c55e;padding-left:14px;color:#57534e;margin:12px 0;}
     .ln-body table{border-collapse:collapse;width:100%;margin:12px 0;}
@@ -1961,6 +1998,28 @@
       await loadGoogleIdentityServices();
 
       return new Promise((resolve, reject) => {
+        let settled = false;
+        const timeoutId = setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          const msg = 'Google認証の応答がタイムアウトしました（ポップアップブロックやCookie制限を確認してください）';
+          state.lastSyncError = msg;
+          reject(new Error(msg));
+        }, 90000);
+
+        const finishResolve = (val) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timeoutId);
+          resolve(val);
+        };
+        const finishReject = (err) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timeoutId);
+          reject(err);
+        };
+
         try {
           const tokenClient = window.google.accounts.oauth2.initTokenClient({
             client_id: state.gdriveClientId.trim(),
@@ -1971,23 +2030,23 @@
                 state.gdriveTokenExpiry = Date.now() + (Number(resp.expires_in || 3500) * 1000);
                 state.lastSyncError = '';
                 updateGdriveStatusUI();
-                resolve(resp.access_token);
+                finishResolve(resp.access_token);
               } else {
                 const errCode = resp?.error || 'auth_failed';
                 const errMsg = resp?.error_description || errCode;
                 state.lastSyncError = errMsg;
-                reject(new Error(`Google認証エラー: ${errMsg}`));
+                finishReject(new Error(`Google認証エラー: ${errMsg}`));
               }
             },
             error_callback: (err) => {
               const msg = err?.message || err?.type || '認証ポップアップがブロックまたはキャンセルされました';
               state.lastSyncError = msg;
-              reject(new Error(msg));
+              finishReject(new Error(msg));
             }
           });
           tokenClient.requestAccessToken({ prompt: promptMode });
         } catch (err) {
-          reject(err);
+          finishReject(err);
         }
       });
     }
@@ -2083,6 +2142,239 @@
       return currentParent;
     }
 
+    async function findExistingGdriveFolder(folderName, parentId = null) {
+      const parentClause = parentId ? `'${escapeDriveQueryValue(parentId)}' in parents and ` : `'root' in parents and `;
+      const q = `${parentClause}name = '${escapeDriveQueryValue(folderName)}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+      const searchUrl = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id,name)&spaces=drive`;
+      const res = await gdriveFetch(searchUrl);
+      const data = await res.json();
+      return (data.files && data.files.length > 0) ? data.files[0].id : null;
+    }
+
+    async function resolveExistingGdriveFolderIdByPath(notebookPath) {
+      if (!state.gdriveRootFolderId) {
+        state.gdriveRootFolderId = await findExistingGdriveFolder(state.gdriveFolderName, null);
+      }
+      if (!state.gdriveRootFolderId) return null;
+      if (!notebookPath) return state.gdriveRootFolderId;
+      const parts = notebookPath.split('/').map(s => s.trim()).filter(Boolean);
+      let currentParent = state.gdriveRootFolderId;
+      for (const part of parts) {
+        const nextId = await findExistingGdriveFolder(part, currentParent);
+        if (!nextId) return null;
+        currentParent = nextId;
+      }
+      return currentParent;
+    }
+
+    async function trashGdriveFolderIfEmpty(folderId) {
+      if (!folderId || folderId === state.gdriveRootFolderId) return false;
+      const q = `'${escapeDriveQueryValue(folderId)}' in parents and trashed = false`;
+      const res = await gdriveFetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id)&pageSize=1`);
+      const data = await res.json();
+      if (data.files && data.files.length > 0) {
+        return false;
+      }
+      await gdriveFetch(`https://www.googleapis.com/drive/v3/files/${folderId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ trashed: true })
+      });
+      return true;
+    }
+
+    async function cleanupEmptyGdriveFolderPath(notebookPath) {
+      const cleanPath = String(notebookPath || '').replace(/^\/+|\/+$/g, '').trim();
+      if (!cleanPath) return;
+      const parts = cleanPath.split('/').map(s => s.trim()).filter(Boolean);
+      for (let len = parts.length; len >= 1; len--) {
+        const subPath = parts.slice(0, len).join('/');
+        const folderId = await resolveExistingGdriveFolderIdByPath(subPath);
+        if (!folderId) continue;
+        const removed = await trashGdriveFolderIfEmpty(folderId);
+        if (!removed) break;
+      }
+    }
+
+    async function queuePendingGdriveFolderCleanup(oldPaths) {
+      const list = Array.isArray(oldPaths) ? oldPaths : [oldPaths];
+      const normalized = list.map(p => String(p || '').replace(/^\/+|\/+$/g, '').trim()).filter(Boolean);
+      if (normalized.length === 0) return;
+      const existing = await getAppMeta('pending_gdrive_folder_cleanups');
+      const merged = Array.from(new Set([...(Array.isArray(existing) ? existing : []), ...normalized]));
+      await setAppMeta('pending_gdrive_folder_cleanups', merged);
+    }
+
+    async function flushPendingGdriveFolderCleanups() {
+      const pending = await getAppMeta('pending_gdrive_folder_cleanups');
+      if (!Array.isArray(pending) || pending.length === 0) return;
+      state.gdriveFolderCache.clear();
+      const sorted = [...pending].sort((a, b) => b.split('/').length - a.split('/').length);
+      const remaining = [];
+      for (const oldPath of sorted) {
+        try {
+          const oldFolderId = await resolveExistingGdriveFolderIdByPath(oldPath);
+          if (oldFolderId && oldFolderId !== state.gdriveRootFolderId) {
+            const q = `'${escapeDriveQueryValue(oldFolderId)}' in parents and mimeType = 'text/html' and trashed = false`;
+            const res = await gdriveFetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id,name)&pageSize=1000`);
+            const data = await res.json();
+            for (const f of (data.files || [])) {
+              const idMatch = f.name.match(/__([a-zA-Z0-9_-]+)\.html$/);
+              const matchedNote = idMatch ? state.notes.find(n => n.id === idMatch[1]) : null;
+              const destPath = matchedNote ? (matchedNote.notebook || '') : '';
+              const destFolderId = await ensureGdriveFolderForNotebook(destPath);
+              await moveGdriveFileToFolder(f.id, destFolderId, f.name);
+            }
+          }
+          await cleanupEmptyGdriveFolderPath(oldPath);
+        } catch (err) {
+          console.warn('保留フォルダクリーンアップ再試行待ち:', oldPath, err);
+          remaining.push(oldPath);
+        }
+      }
+      state.gdriveFolderCache.clear();
+      await setAppMeta('pending_gdrive_folder_cleanups', remaining);
+    }
+
+    async function queuePendingGdriveTrashFileIds(fileIds) {
+      const normalized = (Array.isArray(fileIds) ? fileIds : [fileIds]).filter(Boolean);
+      if (normalized.length === 0) return;
+      const existing = await getAppMeta('pending_gdrive_trash_ids');
+      const merged = Array.from(new Set([...(Array.isArray(existing) ? existing : []), ...normalized]));
+      await setAppMeta('pending_gdrive_trash_ids', merged);
+    }
+
+    async function flushPendingGdriveTrashFileIds() {
+      const pending = await getAppMeta('pending_gdrive_trash_ids');
+      if (!Array.isArray(pending) || pending.length === 0) return;
+      const remaining = [];
+      for (const fileId of pending) {
+        try {
+          await gdriveFetch(`https://www.googleapis.com/drive/v3/files/${fileId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ trashed: true })
+          });
+        } catch (err) {
+          const msg = String(err?.message || '');
+          if (!msg.includes('(404)')) {
+            remaining.push(fileId);
+          }
+        }
+      }
+      await setAppMeta('pending_gdrive_trash_ids', remaining);
+    }
+
+    async function moveGdriveFileToFolder(fileId, targetFolderId, desiredFileName = null) {
+      if (!fileId || !targetFolderId) return null;
+      const infoRes = await gdriveFetch(`https://www.googleapis.com/drive/v3/files/${fileId}?fields=id,name,parents,trashed`);
+      const info = await infoRes.json();
+      if (info.trashed) return null;
+
+      const currentParents = info.parents || [];
+      const oldParents = currentParents.filter(p => p !== targetFolderId).join(',');
+      const needsMove = !currentParents.includes(targetFolderId);
+      const needsRename = Boolean(desiredFileName && info.name !== desiredFileName);
+      if (!needsMove && !needsRename) return info;
+
+      const moveParams = needsMove
+        ? `&addParents=${encodeURIComponent(targetFolderId)}${oldParents ? `&removeParents=${encodeURIComponent(oldParents)}` : ''}`
+        : '';
+      const patchRes = await gdriveFetch(`https://www.googleapis.com/drive/v3/files/${fileId}?fields=id,md5Checksum,modifiedTime${moveParams}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(needsRename ? { name: desiredFileName } : {})
+      });
+      return patchRes.json();
+    }
+
+    async function syncFolderMigrationToGdrive({ oldPaths = [], newPath = '', affectedNotes = [], noteTargetPaths = null }) {
+      const normalizedOldPaths = Array.from(new Set(
+        oldPaths.map(p => String(p || '').replace(/^\/+|\/+$/g, '').trim()).filter(Boolean)
+      ));
+      if (!state.gdriveClientId) return false;
+
+      if (!isGdriveConnected() || state.isGdriveSyncing) {
+        await queuePendingGdriveFolderCleanup(normalizedOldPaths);
+        return false;
+      }
+
+      state.isGdriveSyncing = true;
+      state.abortSyncRequested = false;
+      state.gdriveFolderCache.clear();
+      setSyncProgress(true, 'Googleドライブのフォルダ構成を同期中...', 15);
+      updateGdriveStatusUI();
+
+      try {
+        state.gdriveRootFolderId = await findOrCreateGdriveFolder(state.gdriveFolderName, null);
+        const cloudTargets = affectedNotes.filter(n => n.gdriveFileId);
+
+        if (cloudTargets.length > 0) {
+          setSyncProgress(true, `ドライブ上のノートを移動中 (0/${cloudTargets.length})`, 30);
+          await runConcurrentQueue(cloudTargets, SYNC_CONCURRENCY_LIMIT, async (noteMeta) => {
+            const destPath = noteTargetPaths && noteTargetPaths.has(noteMeta.id)
+              ? noteTargetPaths.get(noteMeta.id)
+              : (noteMeta.notebook || newPath || '');
+            const destFolderId = await ensureGdriveFolderForNotebook(destPath);
+            const expectedName = `${sanitizeFilename(noteMeta.title)}__${noteMeta.id}.html`;
+
+            let body = (noteMeta.id === state.activeNoteContentId)
+              ? state.activeNoteContent
+              : (noteMeta.bodyCached ? await loadNoteBodyFromDB(noteMeta.id) : null);
+
+            if (body !== null && body !== undefined) {
+              await uploadNoteHtmlToGdrive(noteMeta, body);
+            } else {
+              const moved = await moveGdriveFileToFolder(noteMeta.gdriveFileId, destFolderId, expectedName);
+              if (moved) {
+                noteMeta.gdriveMd5 = moved.md5Checksum || noteMeta.gdriveMd5;
+                noteMeta.gdriveModifiedTime = moved.modifiedTime || noteMeta.gdriveModifiedTime;
+                noteMeta.syncStatus = 'synced';
+                await saveNoteMetaAndBodyToDB(noteMeta, null, true);
+              }
+            }
+          }, (done, total) => {
+            setSyncProgress(true, `ドライブ上のノートを移動中 (${done}/${total})`, 30 + Math.round((done / total) * 45));
+          });
+        }
+
+        setSyncProgress(true, '旧フォルダ内の残存データ・空フォルダを整理中...', 82);
+        const sortedOldPaths = [...normalizedOldPaths].sort((a, b) => b.split('/').length - a.split('/').length);
+        for (const oldPath of sortedOldPaths) {
+          const oldFolderId = await resolveExistingGdriveFolderIdByPath(oldPath);
+          if (oldFolderId && oldFolderId !== state.gdriveRootFolderId) {
+            const q = `'${escapeDriveQueryValue(oldFolderId)}' in parents and mimeType = 'text/html' and trashed = false`;
+            const res = await gdriveFetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id,name)&pageSize=1000`);
+            const data = await res.json();
+            for (const f of (data.files || [])) {
+              const idMatch = f.name.match(/__([a-zA-Z0-9_-]+)\.html$/);
+              const matchedNote = idMatch ? state.notes.find(n => n.id === idMatch[1]) : null;
+              const fallbackDest = matchedNote
+                ? (matchedNote.notebook || '')
+                : (noteTargetPaths ? '' : newPath);
+              const destFolderId = await ensureGdriveFolderForNotebook(fallbackDest);
+              if (destFolderId !== oldFolderId) {
+                await moveGdriveFileToFolder(f.id, destFolderId, f.name);
+              }
+            }
+          }
+          await cleanupEmptyGdriveFolderPath(oldPath);
+        }
+
+        state.gdriveFolderCache.clear();
+        return true;
+      } catch (err) {
+        console.error('Googleドライブのフォルダ移動反映エラー:', err);
+        await queuePendingGdriveFolderCleanup(normalizedOldPaths);
+        showToast(`ドライブ側のフォルダ整理を保留しました（次回送信時に再実行します）: ${err.message}`, 'warning');
+        return false;
+      } finally {
+        state.isGdriveSyncing = false;
+        setSyncProgress(false);
+        updateGdriveStatusUI();
+      }
+    }
+
     async function uploadAttachmentBlobToGdrive(fileOrBlob, fileName, mimeType) {
       const folderId = await findOrCreateGdriveFolder(state.gdriveAttachFolderName, null);
       const boundary = `loosenote_att_${Date.now()}_${Math.random().toString(36).slice(2)}`;
@@ -2100,14 +2392,32 @@
     }
 
     async function uploadNoteHtmlToGdrive(meta, htmlContent) {
+      if (htmlContent === null || htmlContent === undefined) {
+        throw new Error(`ノート「${meta.title || meta.id}」の本文が空のためアップロードを中止しました`);
+      }
+      if (meta.hasMedia && !detectHasMedia(htmlContent)) {
+        throw new Error(`ノート「${meta.title || meta.id}」の添付ファイルデータが欠落しているためアップロードを中止しました`);
+      }
+
       const targetFolderId = await ensureGdriveFolderForNotebook(meta.notebook || '');
       const fileName = `${sanitizeFilename(meta.title)}__${meta.id}.html`;
       const fullHtml = serializeNoteToStandaloneHtml(meta, htmlContent);
       const boundary = `loosenote_note_${Date.now()}_${Math.random().toString(36).slice(2)}`;
       const metadata = { name: fileName, mimeType: 'text/html' };
 
-      let url = 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,md5Checksum,modifiedTime,parents';
+      let url = 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,md5Checksum,modifiedTime,parents,size';
       let method = 'POST';
+
+      if (!meta.gdriveFileId) {
+        try {
+          const dupQuery = `'${escapeDriveQueryValue(targetFolderId)}' in parents and name contains '__${escapeDriveQueryValue(meta.id)}.html' and trashed = false`;
+          const dupRes = await gdriveFetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(dupQuery)}&fields=files(id)&pageSize=1`);
+          const dupData = await dupRes.json();
+          if (dupData.files && dupData.files.length > 0) {
+            meta.gdriveFileId = dupData.files[0].id;
+          }
+        } catch {}
+      }
 
       if (meta.gdriveFileId) {
         try {
@@ -2119,7 +2429,7 @@
             const moveParams = (info.parents || []).includes(targetFolderId)
               ? ''
               : `&addParents=${encodeURIComponent(targetFolderId)}${oldParents ? `&removeParents=${encodeURIComponent(oldParents)}` : ''}`;
-            url = `https://www.googleapis.com/upload/drive/v3/files/${meta.gdriveFileId}?uploadType=multipart&fields=id,md5Checksum,modifiedTime,parents${moveParams}`;
+            url = `https://www.googleapis.com/upload/drive/v3/files/${meta.gdriveFileId}?uploadType=multipart&fields=id,md5Checksum,modifiedTime,parents,size${moveParams}`;
           } else {
             meta.gdriveFileId = null;
           }
@@ -2132,11 +2442,16 @@
         metadata.parents = [targetFolderId];
       }
 
-      const multipartBody = `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n--${boundary}\r\nContent-Type: text/html; charset=UTF-8\r\n\r\n${fullHtml}\r\n--${boundary}--`;
+      const multipartHead = `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n--${boundary}\r\nContent-Type: text/html; charset=UTF-8\r\n\r\n`;
+      const multipartTail = `\r\n--${boundary}--`;
+      const multipartBlob = new Blob([multipartHead, fullHtml, multipartTail], {
+        type: `multipart/related; boundary=${boundary}`
+      });
+
       const res = await gdriveFetch(url, {
         method,
         headers: { 'Content-Type': `multipart/related; boundary=${boundary}` },
-        body: multipartBody
+        body: multipartBlob
       });
       const uploaded = await res.json();
       meta.gdriveFileId = uploaded.id;
@@ -2153,14 +2468,21 @@
     }
 
     async function trashOrDeleteGdriveFile(gdriveFileId) {
-      if (!gdriveFileId || !isGdriveConnected()) return;
+      if (!gdriveFileId) return;
+      if (!isGdriveConnected()) {
+        await queuePendingGdriveTrashFileIds([gdriveFileId]);
+        return;
+      }
       try {
         await gdriveFetch(`https://www.googleapis.com/drive/v3/files/${gdriveFileId}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ trashed: true })
         });
-      } catch (e) { console.warn('Driveゴミ箱移動スキップ:', e); }
+      } catch (e) {
+        console.warn('Driveゴミ箱移動保留:', e);
+        await queuePendingGdriveTrashFileIds([gdriveFileId]);
+      }
     }
 
     async function runConcurrentQueue(items, concurrency, workerFn, onProgress) {
@@ -2240,7 +2562,7 @@
         await ensureValidGdriveToken(promptMode);
         setSyncProgress(true, `保存先フォルダ「${state.gdriveFolderName}」を確認中...`, 75);
         state.gdriveRootFolderId = await findOrCreateGdriveFolder(state.gdriveFolderName, null);
-        const dirtyCount = state.notes.filter(n => !n.trashed && (n.syncStatus === 'dirty' || n.syncStatus === 'local_only')).length;
+        const dirtyCount = state.notes.filter(n => (n.syncStatus === 'dirty' || n.syncStatus === 'local_only') && (!n.trashed || n.gdriveFileId)).length;
         const hint = dirtyCount > 0
           ? `（未送信 ${dirtyCount}件あり：「⬆️ 送信」または「⬇️ 受信」を選択してください）`
           : '（「⬆️ 送信」または「⬇️ 受信」で手動同期できます）';
@@ -2275,23 +2597,56 @@
 
         if (state.abortSyncRequested) throw new Error('送信が中断されました');
 
+        await flushPendingGdriveTrashFileIds();
+
+        const trashedCloudNotes = state.notes.filter(n => n.trashed && (n.syncStatus === 'dirty' || n.syncStatus === 'local_only'));
+        let trashedSyncedCount = 0;
+        for (const tn of trashedCloudNotes) {
+          if (tn.gdriveFileId) {
+            await trashOrDeleteGdriveFile(tn.gdriveFileId);
+            trashedSyncedCount++;
+          }
+          tn.syncStatus = 'synced';
+          await saveNoteMetaAndBodyToDB(tn, null, true);
+        }
+
         const dirtyNotes = state.notes.filter(n => !n.trashed && (n.syncStatus === 'dirty' || n.syncStatus === 'local_only'));
-        if (dirtyNotes.length === 0) {
+        if (dirtyNotes.length === 0 && trashedSyncedCount === 0) {
+          await flushPendingGdriveFolderCleanups();
+          rebuildNotebooksFromNotes();
+          renderAll();
           showToast('送信すべき端末側の変更はありません', 'info');
           return;
         }
 
-        setSyncProgress(true, `端末の変更を送信中 (0/${dirtyNotes.length})`, 25);
         let uploadedCount = 0;
-        await runConcurrentQueue(dirtyNotes, SYNC_CONCURRENCY_LIMIT, async (noteMeta) => {
-          const body = (noteMeta.id === state.activeNoteContentId)
-            ? state.activeNoteContent
-            : (await loadNoteBodyFromDB(noteMeta.id)) || '<p></p>';
-          await uploadNoteHtmlToGdrive(noteMeta, body);
-          uploadedCount++;
-        }, (done, total) => {
-          setSyncProgress(true, `端末の変更を送信中 (${done}/${total})`, 25 + Math.round((done / total) * 70));
-        });
+        const failedNotes = [];
+        if (dirtyNotes.length > 0) {
+          setSyncProgress(true, `端末の変更を送信中 (0/${dirtyNotes.length})`, 25);
+          await runConcurrentQueue(dirtyNotes, SYNC_CONCURRENCY_LIMIT, async (noteMeta) => {
+            try {
+              let body = (noteMeta.id === state.activeNoteContentId)
+                ? state.activeNoteContent
+                : await loadNoteBodyFromDB(noteMeta.id);
+              if (body === null && noteMeta.gdriveFileId) {
+                const rawCloud = await downloadNoteHtmlFromGdrive(noteMeta.gdriveFileId).catch(() => null);
+                if (rawCloud) {
+                  body = parseStandaloneHtmlToNote(rawCloud, noteMeta.title).content;
+                }
+              }
+              if (body === null || body === undefined) {
+                throw new Error('端末DBから本文データを取得できないため空HTML上書きを防止しました');
+              }
+              await uploadNoteHtmlToGdrive(noteMeta, body);
+              uploadedCount++;
+            } catch (noteErr) {
+              console.error(`ノート送信エラー (${noteMeta.title || noteMeta.id}):`, noteErr);
+              failedNotes.push(`${noteMeta.title || '無題'}: ${noteErr.message}`);
+            }
+          }, (done, total) => {
+            setSyncProgress(true, `端末の変更を送信中 (${done}/${total})`, 25 + Math.round((done / total) * 70));
+          });
+        }
 
         if (state.activeNoteId) {
           const activeMeta = getActiveNoteMeta();
@@ -2300,9 +2655,18 @@
           }
         }
 
+        await flushPendingGdriveFolderCleanups();
         rebuildNotebooksFromNotes();
         renderAll();
-        showToast(`Googleドライブへ送信完了（送信 ${uploadedCount}件）`, 'success');
+        const resultParts = [];
+        if (uploadedCount > 0) resultParts.push(`送信 ${uploadedCount}件`);
+        if (trashedSyncedCount > 0) resultParts.push(`ゴミ箱反映 ${trashedSyncedCount}件`);
+        if (failedNotes.length > 0) {
+          state.lastSyncError = failedNotes[0];
+          showToast(`${resultParts.join(' / ')} / 保護スキップ・失敗 ${failedNotes.length}件（${failedNotes[0]}）`, 'warning');
+        } else {
+          showToast(`Googleドライブへ送信完了（${resultParts.join(' / ')}）`, 'success');
+        }
       } catch (err) {
         console.error(err);
         state.lastSyncError = err.message || '送信エラー';
@@ -2329,8 +2693,10 @@
 
         if (state.abortSyncRequested) throw new Error('受信が中断されました');
 
+        await flushPendingGdriveTrashFileIds();
+
         setSyncProgress(true, 'ノートブック階層を取得中...', 15);
-        const folderPathMap = await buildGdriveFolderTreeMap(state.gdriveRootFolderId);
+        let folderPathMap = await buildGdriveFolderTreeMap(state.gdriveRootFolderId);
 
         const savedPageToken = forceFullScan ? null : await getAppMeta('gdrive_changes_page_token');
         let downloadedCount = 0;
@@ -2460,6 +2826,31 @@
             currentToken = data.nextPageToken || null;
           }
 
+          const hasFolderChange = changedItems.some(ch => ch.file && ch.file.mimeType === 'application/vnd.google-apps.folder');
+          if (hasFolderChange) {
+            folderPathMap = await buildGdriveFolderTreeMap(state.gdriveRootFolderId);
+            let pToken = null;
+            do {
+              const q = `mimeType = 'text/html' and trashed = false`;
+              const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=nextPageToken,files(id,parents)&pageSize=1000${pToken ? `&pageToken=${encodeURIComponent(pToken)}` : ''}`;
+              const res = await gdriveFetch(url);
+              const data = await res.json();
+              for (const f of (data.files || [])) {
+                const parentId = f.parents && f.parents[0];
+                if (!parentId || !folderPathMap.has(parentId)) continue;
+                const local = state.notes.find(n => n.gdriveFileId === f.id);
+                if (local && local.syncStatus !== 'dirty') {
+                  const latestNb = folderPathMap.get(parentId) || '';
+                  if (local.notebook !== latestNb) {
+                    local.notebook = latestNb;
+                    await saveNoteMetaAndBodyToDB(local, null, true);
+                  }
+                }
+              }
+              pToken = data.nextPageToken || null;
+            } while (pToken);
+          }
+
           const toFetch = [];
           for (const ch of changedItems) {
             const localIdx = state.notes.findIndex(n => n.gdriveFileId === ch.fileId);
@@ -2552,6 +2943,7 @@
           if (latestStartToken) await setAppMeta('gdrive_changes_page_token', latestStartToken);
         }
 
+        await flushPendingGdriveFolderCleanups();
         await enforceLruBodyCacheLimit();
         rebuildNotebooksFromNotes();
         renderAll();
@@ -2578,7 +2970,7 @@
     async function openGdriveSettingsModal() {
       const cachedCount = state.notes.filter(n => n.bodyCached).length;
       const syncedCount = state.notes.filter(n => n.gdriveFileId).length;
-      const dirtyCount = state.notes.filter(n => n.syncStatus === 'dirty' || n.syncStatus === 'local_only').length;
+      const dirtyCount = state.notes.filter(n => (n.syncStatus === 'dirty' || n.syncStatus === 'local_only') && (!n.trashed || n.gdriveFileId)).length;
       const maxLru = getMaxLruCachedNotes();
       const currentOrigin = window.location.origin || '(ローカルファイル)';
 
@@ -2676,9 +3068,53 @@
       return isNaN(dt.getTime()) ? new Date().toISOString() : dt.toISOString();
     }
 
+    function normalizeBase64String(raw) {
+      let clean = String(raw || '').replace(/[^A-Za-z0-9+/=]/g, '');
+      const mod = clean.length % 4;
+      if (mod === 2) clean += '==';
+      else if (mod === 3) clean += '=';
+      else if (mod === 1) clean = clean.slice(0, -1);
+      return clean;
+    }
+
+    function inferMimeTypeFromFileName(fileName, currentMime = '') {
+      const normalizedMime = String(currentMime || '').trim().toLowerCase();
+      if (normalizedMime && normalizedMime !== 'application/octet-stream' && normalizedMime !== 'application/unknown') {
+        return normalizedMime;
+      }
+      const ext = (String(fileName || '').match(/\.([a-z0-9]+)$/i)?.[1] || '').toLowerCase();
+      const map = {
+        jpg: 'image/jpeg',
+        jpeg: 'image/jpeg',
+        png: 'image/png',
+        gif: 'image/gif',
+        webp: 'image/webp',
+        svg: 'image/svg+xml',
+        bmp: 'image/bmp',
+        ico: 'image/x-icon',
+        pdf: 'application/pdf',
+        mp3: 'audio/mpeg',
+        m4a: 'audio/mp4',
+        wav: 'audio/wav',
+        ogg: 'audio/ogg',
+        mp4: 'video/mp4',
+        mov: 'video/quicktime',
+        webm: 'video/webm',
+        txt: 'text/plain',
+        md: 'text/markdown',
+        csv: 'text/csv',
+        json: 'application/json',
+        html: 'text/html',
+        htm: 'text/html',
+        zip: 'application/zip'
+      };
+      return map[ext] || normalizedMime || 'application/octet-stream';
+    }
+
     async function computeMd5HexForResources(cleanB64) {
       try {
-        const bin = atob(cleanB64);
+        const normalized = normalizeBase64String(cleanB64);
+        const bin = atob(normalized);
         const bytes = new Uint8Array(bin.length);
         for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
         return md5Bytes(bytes);
@@ -2829,16 +3265,22 @@
           const resNodes = Array.from(node.getElementsByTagName('resource'));
           for (const rNode of resNodes) {
             const dataEl = rNode.getElementsByTagName('data')[0];
-            const cleanB64 = (dataEl?.textContent || '').replace(/\s+/g, '');
+            const cleanB64 = normalizeBase64String(dataEl?.textContent || '');
             if (dataEl) dataEl.textContent = '';
 
-            const mime = rNode.getElementsByTagName('mime')[0]?.textContent || 'application/octet-stream';
-            const fileName = rNode.getElementsByTagName('file-name')[0]?.textContent || 'attachment';
+            const fileName = rNode.getElementsByTagName('file-name')[0]?.textContent?.trim() || 'attachment';
+            const rawMime = rNode.getElementsByTagName('mime')[0]?.textContent || '';
+            const mime = inferMimeTypeFromFileName(fileName, rawMime);
             const approxBytes = Math.floor((cleanB64.length * 3) / 4);
             const isTooLarge = approxBytes > LARGE_FILE_THRESHOLD;
 
-            const recHash = rNode.getElementsByTagName('recognition')[0]?.textContent?.match(/objID="([a-f0-9]{32})"/i)?.[1] || '';
-            const hashAttr = recHash || (!isTooLarge && cleanB64.length > 0 ? await computeMd5HexForResources(cleanB64) : '');
+            const recHash = (rNode.getElementsByTagName('recognition')[0]?.textContent?.match(/objID="([a-f0-9]{32})"/i)?.[1] || '').toLowerCase();
+            const computedHash = (!isTooLarge && cleanB64.length > 0) ? (await computeMd5HexForResources(cleanB64)).toLowerCase() : '';
+            const primaryHash = computedHash || recHash;
+
+            if (!isTooLarge && cleanB64.length === 0) {
+              continue;
+            }
 
             const item = {
               b64: isTooLarge ? '' : cleanB64,
@@ -2846,24 +3288,39 @@
               fileName,
               approxBytes,
               isTooLarge,
-              hash: hashAttr.toLowerCase(),
+              hash: primaryHash,
               used: false
             };
-            if (item.hash) resMap.set(item.hash, item);
+            if (computedHash) resMap.set(computedHash, item);
+            if (recHash && !resMap.has(recHash)) resMap.set(recHash, item);
             resList.push(item);
           }
 
           const contentEl = node.getElementsByTagName('content')[0];
-          const rawEnml = (contentEl?.textContent || '')
+          let rawContentString = '';
+          if (contentEl) {
+            if (contentEl.children && contentEl.children.length > 0) {
+              const serializer = new XMLSerializer();
+              rawContentString = Array.from(contentEl.childNodes).map(n => serializer.serializeToString(n)).join('');
+            } else {
+              rawContentString = contentEl.textContent || '';
+            }
+            contentEl.textContent = '';
+          }
+
+          const rawEnml = rawContentString
+            .replace(/<en:media\b/gi, '<en-media')
+            .replace(/<\/en:media>/gi, '</en-media>')
+            .replace(/<en:todo\b/gi, '<en-todo')
+            .replace(/<\/en:todo>/gi, '</en-todo>')
             .replace(/<en-media\b([^>]*?)\s*\/>/gi, '<en-media$1></en-media>')
             .replace(/<en-todo\b([^>]*?)\s*\/>/gi, '<en-todo$1></en-todo>');
-          if (contentEl) contentEl.textContent = '';
 
           const enmlDoc = parser.parseFromString(rawEnml, 'text/html');
           const enNote = enmlDoc.querySelector('en-note') || enmlDoc.body;
 
-          if (enNote) {
-            enNote.querySelectorAll('en-todo').forEach(todo => {
+          if (enmlDoc.body) {
+            enmlDoc.querySelectorAll('en-todo').forEach(todo => {
               const checked = todo.getAttribute('checked') === 'true';
               const cb = enmlDoc.createElement('input');
               cb.type = 'checkbox';
@@ -2871,11 +3328,14 @@
               todo.replaceWith(cb);
             });
 
-            enNote.querySelectorAll('en-media').forEach(media => {
-              const hash = (media.getAttribute('hash') || '').toLowerCase();
+            enmlDoc.querySelectorAll('en-media').forEach(media => {
+              const hash = (media.getAttribute('hash') || '').trim().toLowerCase();
               const res = resMap.get(hash);
               if (!res) { media.remove(); return; }
               res.used = true;
+
+              const mediaTypeAttr = (media.getAttribute('type') || '').trim().toLowerCase();
+              const effectiveMime = (res.mime === 'application/octet-stream' && mediaTypeAttr) ? mediaTypeAttr : res.mime;
 
               if (res.isTooLarge) {
                 largeSkippedCount++;
@@ -2887,9 +3347,8 @@
                 return;
               }
 
-              const dataUrl = `data:${res.mime};base64,${res.b64}`;
-              res.b64 = '';
-              if (res.mime.startsWith('image/')) {
+              const dataUrl = `data:${effectiveMime};base64,${res.b64}`;
+              if (effectiveMime.startsWith('image/')) {
                 const img = enmlDoc.createElement('img');
                 img.src = dataUrl;
                 img.alt = res.fileName;
@@ -2906,14 +3365,15 @@
 
           const extraParts = [];
           for (const res of resList) {
-            if (res.used) continue;
-            if (res.isTooLarge) {
-              largeSkippedCount++;
-              extraParts.push(`<div class="loosenote-link-card" style="border:1px solid #bae6fd;background:#f0f9ff;border-radius:12px;padding:12px 14px;margin:10px 0;"><div style="font-size:11px;font-weight:700;color:#0284c7;">⚠️ 10MB超添付ファイル（埋め込み除外）</div><div style="font-size:13px;font-weight:700;">📎 ${escapeHtml(res.fileName)} (${formatBytes(res.approxBytes)})</div></div>`);
-            } else if (res.mime.startsWith('image/')) {
-              extraParts.push(`<p><img src="data:${res.mime};base64,${res.b64}" alt="${escapeHtml(res.fileName)}"></p>`);
-            } else {
-              extraParts.push(`<p><a href="data:${res.mime};base64,${res.b64}" download="${escapeHtml(res.fileName)}">📎 ${escapeHtml(res.fileName)} (${formatBytes(res.approxBytes)})</a></p>`);
+            if (!res.used) {
+              if (res.isTooLarge) {
+                largeSkippedCount++;
+                extraParts.push(`<div class="loosenote-link-card" style="border:1px solid #bae6fd;background:#f0f9ff;border-radius:12px;padding:12px 14px;margin:10px 0;"><div style="font-size:11px;font-weight:700;color:#0284c7;">⚠️ 10MB超添付ファイル（埋め込み除外）</div><div style="font-size:13px;font-weight:700;">📎 ${escapeHtml(res.fileName)} (${formatBytes(res.approxBytes)})</div></div>`);
+              } else if (res.mime.startsWith('image/')) {
+                extraParts.push(`<p><img src="data:${res.mime};base64,${res.b64}" alt="${escapeHtml(res.fileName)}"></p>`);
+              } else {
+                extraParts.push(`<p><a href="data:${res.mime};base64,${res.b64}" download="${escapeHtml(res.fileName)}">📎 ${escapeHtml(res.fileName)} (${formatBytes(res.approxBytes)})</a></p>`);
+              }
             }
             res.b64 = '';
           }
@@ -3131,9 +3591,12 @@
     }
 
     function insertLinkCardHtml({ title, url, memo = '' }, targetCardEl = null) {
-      const safeTitle = escapeHtml(title || url || 'Googleドライブ リンク');
-      const safeUrl = escapeHtml(url || '#');
-      const safeMemo = escapeHtml(memo || '');
+      const rawTitle = title || url || 'Googleドライブ リンク';
+      const rawUrl = url || '#';
+      const rawMemo = memo || '';
+      const safeTitle = escapeHtml(rawTitle);
+      const safeUrl = escapeHtml(rawUrl);
+      const safeMemo = escapeHtml(rawMemo);
       const innerHtml = `
         <button type="button" class="loosenote-edit-link-card-btn" contenteditable="false">✎ 編集</button>
         <div style="font-size:11px;font-weight:700;color:#0284c7;margin-bottom:3px;">☁️ Google Drive 外部リンクカード</div>
@@ -3143,10 +3606,18 @@
       `;
 
       if (targetCardEl) {
+        targetCardEl.dataset.cardTitle = rawTitle;
+        targetCardEl.dataset.cardUrl = rawUrl;
+        targetCardEl.dataset.cardMemo = rawMemo;
+        targetCardEl.setAttribute('contenteditable', 'false');
         targetCardEl.innerHTML = innerHtml;
       } else {
         const card = document.createElement('div');
         card.className = 'loosenote-link-card';
+        card.setAttribute('contenteditable', 'false');
+        card.dataset.cardTitle = rawTitle;
+        card.dataset.cardUrl = rawUrl;
+        card.dataset.cardMemo = rawMemo;
         card.setAttribute('style', 'border:1px solid #bae6fd;background:#f0f9ff;border-radius:12px;padding:12px 14px;margin:12px 0;');
         card.innerHTML = innerHtml;
         insertNodeAtEditorCursor(card);
@@ -3158,12 +3629,18 @@
     }
 
     async function openDriveLinkCardModal(defaultTitle = '', existingCard = null) {
-      const currentTitle = existingCard ? (existingCard.querySelector('a')?.textContent || defaultTitle) : defaultTitle;
-      const currentUrl = existingCard ? (existingCard.querySelector('a')?.getAttribute('href') || '') : '';
+      const currentTitle = existingCard
+        ? (existingCard.dataset.cardTitle || existingCard.querySelector('a')?.textContent || defaultTitle)
+        : defaultTitle;
+      const currentUrl = existingCard
+        ? (existingCard.dataset.cardUrl || existingCard.querySelector('a')?.getAttribute('href') || '')
+        : '';
       const memoEl = existingCard ? existingCard.querySelector('.loosenote-link-card-memo') : null;
-      const currentMemo = memoEl
-        ? memoEl.textContent
-        : (existingCard && existingCard.children.length >= 5 ? existingCard.children[3].textContent : '');
+      const currentMemo = existingCard
+        ? (existingCard.dataset.cardMemo !== undefined
+            ? existingCard.dataset.cardMemo
+            : (memoEl ? memoEl.textContent : (existingCard.children.length >= 5 ? existingCard.children[3].textContent : '')))
+        : '';
 
       await openCustomModal({
         title: existingCard ? '🔗 Googleドライブリンクカードを編集' : '🔗 Googleドライブリンクカードを挿入',
@@ -3463,6 +3940,7 @@
         console.error('ローカルDB保存失敗:', err);
         el.saveStatusIndicator.innerHTML = `<span style="width:8px;height:8px;border-radius:50%;background:var(--red-600);"></span> 端末保存失敗（容量不足等）`;
         showToast('端末内ストレージへの保存に失敗しました。空き容量を確認してください。', 'error');
+        return;
       }
       updateEditorHeaderMeta(meta);
       updateTotalSizeBadge();
@@ -3763,9 +4241,9 @@
           const stackName = nb.slice(0, -1).trim();
           if (stackName && !stacks.has(stackName)) stacks.set(stackName, []);
         } else if (nb.includes('/')) {
-          const stackName = nb.split('/')[0].trim();
-          if (!stacks.has(stackName)) stacks.set(stackName, []);
-          stacks.get(stackName).push(nb);
+          const stack = nb.split('/')[0];
+          if (!stacks.has(stack)) stacks.set(stack, []);
+          stacks.get(stack).push(nb);
         } else {
           topNotebooks.push(nb);
         }
@@ -3778,52 +4256,55 @@
         </button>
       `;
 
-      stacks.forEach((children, stackName) => {
+      Array.from(stacks.keys()).sort((a, b) => a.localeCompare(b, 'ja')).forEach(stackName => {
+        const children = stacks.get(stackName) || [];
         const isCollapsed = state.collapsedStacks.has(stackName);
-        const totalInStack = children.reduce((sum, c) => sum + (countByNb.get(c) || 0), 0);
+        const stackTotal = children.reduce((sum, child) => sum + (countByNb.get(child) || 0), 0) + (countByNb.get(stackName) || 0);
+        const isStackActive = state.activeFilter === `stack:${stackName}`;
+
         treeHtml += `
-          <div class="tree-row${state.activeFilter === `stack:${stackName}` ? ' active' : ''}" style="cursor:pointer;gap:4px;">
-            <div style="display:flex;align-items:center;gap:4px;flex:1;min-width:0;" data-nb-filter="stack:${escapeHtml(stackName)}">
-              <span data-toggle-stack="${escapeHtml(stackName)}" style="padding:2px;color:var(--text-faint);">${isCollapsed ? '▸' : '▾'}</span>
-              <span class="truncate">🗂️ ${escapeHtml(stackName)}</span>
+          <div style="margin-top:2px;">
+            <div class="tree-row${isStackActive ? ' active' : ''}" style="padding-left:4px;">
+              <div style="display:flex;align-items:center;gap:4px;min-width:0;flex:1;">
+                <button type="button" data-toggle-stack="${escapeHtml(stackName)}" style="padding:2px;color:var(--text-faint);display:inline-flex;">
+                  <svg width="11" height="11" style="transform:${isCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)'};transition:transform 0.15s;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7"></path></svg>
+                </button>
+                <button type="button" data-nb-filter="stack:${escapeHtml(stackName)}" class="truncate" style="flex:1;text-align:left;font-weight:600;">
+                  🗂️ ${escapeHtml(stackName)}
+                </button>
+              </div>
+              <div style="display:flex;align-items:center;gap:3px;flex-shrink:0;">
+                <button type="button" class="hover-action" data-edit-stack="${escapeHtml(stackName)}" title="スタック名を変更" style="font-size:11px;">✎</button>
+                <span style="font-size:11px;color:var(--text-faint);">${stackTotal}</span>
+              </div>
             </div>
-            <div style="display:flex;align-items:center;gap:3px;flex-shrink:0;">
-              <button type="button" class="hover-action" data-edit-stack="${escapeHtml(stackName)}" title="スタック名を変更" style="font-size:11px;">✎</button>
-              <button type="button" class="hover-action" data-delete-stack="${escapeHtml(stackName)}" title="スタックを解除" style="font-size:11px;">×</button>
-              <span style="font-size:11px;color:var(--text-faint);margin-left:2px;">${totalInStack}</span>
-            </div>
+            ${isCollapsed ? '' : children.map(child => {
+              const shortName = child.slice(stackName.length + 1);
+              return `
+                <div class="tree-row indented${state.activeFilter === `nb:${child}` ? ' active' : ''}" style="width:100%;">
+                  <button type="button" data-nb-filter="nb:${escapeHtml(child)}" class="truncate" style="flex:1;text-align:left;">
+                    📓 ${escapeHtml(shortName)}
+                  </button>
+                  <div style="display:flex;align-items:center;gap:3px;flex-shrink:0;">
+                    <button type="button" class="hover-action" data-edit-nb="${escapeHtml(child)}" title="ノートブック名・所属スタックを変更" style="font-size:11px;">✎</button>
+                    <span style="font-size:11px;color:var(--text-faint);">${countByNb.get(child) || 0}</span>
+                  </div>
+                </div>
+              `;
+            }).join('')}
           </div>
         `;
-        if (!isCollapsed) {
-          children.forEach(fullNb => {
-            const shortName = fullNb.split('/').slice(1).join('/');
-            treeHtml += `
-              <div class="tree-row indented${state.activeFilter === `nb:${fullNb}` ? ' active' : ''}" style="width:100%;cursor:pointer;gap:4px;">
-                <div style="display:flex;align-items:center;flex:1;min-width:0;" data-nb-filter="nb:${escapeHtml(fullNb)}">
-                  <span class="truncate">📓 ${escapeHtml(shortName)}</span>
-                </div>
-                <div style="display:flex;align-items:center;gap:3px;flex-shrink:0;">
-                  <button type="button" class="hover-action" data-edit-nb="${escapeHtml(fullNb)}" title="ノートブック名・スタックを変更" style="font-size:11px;">✎</button>
-                  <button type="button" class="hover-action" data-delete-nb="${escapeHtml(fullNb)}" title="ノートブックを削除" style="font-size:11px;">×</button>
-                  <span style="font-size:11px;color:var(--text-faint);margin-left:2px;">${countByNb.get(fullNb) || 0}</span>
-                </div>
-              </div>
-            `;
-          });
-        }
       });
 
       topNotebooks.forEach(nb => {
-        if (stacks.has(nb)) return;
         treeHtml += `
-          <div class="tree-row${state.activeFilter === `nb:${nb}` ? ' active' : ''}" style="width:100%;cursor:pointer;gap:4px;">
-            <div style="display:flex;align-items:center;flex:1;min-width:0;" data-nb-filter="nb:${escapeHtml(nb)}">
-              <span class="truncate">📓 ${escapeHtml(nb)}</span>
-            </div>
+          <div class="tree-row${state.activeFilter === `nb:${nb}` ? ' active' : ''}" style="width:100%;">
+            <button type="button" data-nb-filter="nb:${escapeHtml(nb)}" class="truncate" style="flex:1;text-align:left;">
+              📓 ${escapeHtml(nb)}
+            </button>
             <div style="display:flex;align-items:center;gap:3px;flex-shrink:0;">
-              <button type="button" class="hover-action" data-edit-nb="${escapeHtml(nb)}" title="ノートブック名・スタックを変更" style="font-size:11px;">✎</button>
-              <button type="button" class="hover-action" data-delete-nb="${escapeHtml(nb)}" title="ノートブックを削除" style="font-size:11px;">×</button>
-              <span style="font-size:11px;color:var(--text-faint);margin-left:2px;">${countByNb.get(nb) || 0}</span>
+              <button type="button" class="hover-action" data-edit-nb="${escapeHtml(nb)}" title="ノートブック名・所属スタックを変更" style="font-size:11px;">✎</button>
+              <span style="font-size:11px;color:var(--text-faint);">${countByNb.get(nb) || 0}</span>
             </div>
           </div>
         `;
@@ -3837,31 +4318,19 @@
       `;
 
       el.sidebarNotebooksTree.innerHTML = treeHtml;
-      el.sidebarNotebooksTree.querySelectorAll('[data-toggle-stack]').forEach(sp => {
-        sp.addEventListener('click', (e) => {
-          e.stopPropagation();
-          const st = sp.dataset.toggleStack;
-          if (state.collapsedStacks.has(st)) state.collapsedStacks.delete(st);
-          else state.collapsedStacks.add(st);
-          renderSidebar();
-        });
-      });
       el.sidebarNotebooksTree.querySelectorAll('[data-nb-filter]').forEach(btn => {
         btn.addEventListener('click', () => {
           setActiveFilter(btn.dataset.nbFilter);
           closeMobileSidebar();
         });
       });
-      el.sidebarNotebooksTree.querySelectorAll('[data-edit-stack]').forEach(btn => {
+      el.sidebarNotebooksTree.querySelectorAll('[data-toggle-stack]').forEach(btn => {
         btn.addEventListener('click', (e) => {
           e.stopPropagation();
-          openEditStackModal(btn.dataset.editStack);
-        });
-      });
-      el.sidebarNotebooksTree.querySelectorAll('[data-delete-stack]').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-          e.stopPropagation();
-          deleteStack(btn.dataset.deleteStack);
+          const st = btn.dataset.toggleStack;
+          if (state.collapsedStacks.has(st)) state.collapsedStacks.delete(st);
+          else state.collapsedStacks.add(st);
+          renderSidebar();
         });
       });
       el.sidebarNotebooksTree.querySelectorAll('[data-edit-nb]').forEach(btn => {
@@ -3870,66 +4339,30 @@
           openEditNotebookModal(btn.dataset.editNb);
         });
       });
-      el.sidebarNotebooksTree.querySelectorAll('[data-delete-nb]').forEach(btn => {
+      el.sidebarNotebooksTree.querySelectorAll('[data-edit-stack]').forEach(btn => {
         btn.addEventListener('click', (e) => {
           e.stopPropagation();
-          deleteNotebook(btn.dataset.deleteNb);
+          openEditStackModal(btn.dataset.editStack);
         });
       });
     }
 
-    function setActiveFilter(filterKey) {
+    function setActiveFilter(filter) {
       clearPendingSearchDebounce();
-      state.activeFilter = filterKey;
-      state.renderedListCount = LIST_PAGE_SIZE;
+      state.activeFilter = filter;
       state.selectedNoteIds.clear();
+      state.renderedListCount = LIST_PAGE_SIZE;
 
-      if (filterKey === 'all') el.currentViewLabel.textContent = 'すべてのノート';
-      else if (filterKey === 'pinned') el.currentViewLabel.textContent = 'ピン留め';
-      else if (filterKey === 'unclassified') el.currentViewLabel.textContent = '未分類 (インボックス)';
-      else if (filterKey === 'trash') el.currentViewLabel.textContent = 'ゴミ箱';
-      else if (filterKey.startsWith('stack:')) el.currentViewLabel.textContent = `スタック: ${filterKey.slice(6)}`;
-      else if (filterKey.startsWith('nb:')) el.currentViewLabel.textContent = `ノートブック: ${filterKey.slice(3)}`;
+      let label = 'すべてのノート';
+      if (filter === 'pinned') label = '📌 ピン留め';
+      else if (filter === 'unclassified') label = '📥 未分類 (インボックス)';
+      else if (filter === 'trash') label = '🗑️ ゴミ箱';
+      else if (filter.startsWith('nb:')) label = `📓 ${filter.slice(3)}`;
+      else if (filter.startsWith('stack:')) label = `🗂️ ${filter.slice(6)}`;
 
+      el.currentViewLabel.textContent = label;
       renderSidebar();
       renderNotesList();
-    }
-
-    function renderNotebookSelectOptions() {
-      const current = el.noteNotebookSelect.value;
-      const selectableNotebooks = state.notebooks.filter(nb => !nb.endsWith('/'));
-      el.noteNotebookSelect.innerHTML = `<option value="">未分類 (インボックス)</option>` +
-        selectableNotebooks.map(nb => `<option value="${escapeHtml(nb)}">${escapeHtml(nb)}</option>`).join('');
-      el.noteNotebookSelect.value = current;
-    }
-
-    function renderActiveNoteTags(meta) {
-      el.activeNoteTags.innerHTML = (meta.tags || []).map(tag => `
-        <span class="badge badge-brand" style="font-size:11px;padding:3px 8px;">
-          #${escapeHtml(tag)}
-          <button type="button" data-remove-tag="${escapeHtml(tag)}" style="margin-left:4px;font-weight:700;">×</button>
-        </span>
-      `).join('');
-      el.activeNoteTags.querySelectorAll('[data-remove-tag]').forEach(btn => {
-        btn.addEventListener('click', () => {
-          const t = btn.dataset.removeTag;
-          meta.tags = (meta.tags || []).filter(x => x !== t);
-          renderActiveNoteTags(meta);
-          scheduleSaveActiveNote();
-        });
-      });
-    }
-
-    function updateEditorHeaderMeta(meta) {
-      el.noteCreatedDisplay.textContent = `作成: ${formatDate(meta.created)}`;
-      el.noteUpdatedDisplay.textContent = `更新: ${formatDate(meta.updated)}`;
-      el.noteCharCountDisplay.textContent = `${(meta.charCount || 0).toLocaleString()} 文字`;
-      el.noteSizeDisplay.textContent = formatBytes(meta.byteSize || 0);
-    }
-
-    function updatePinAndTrashUI(meta) {
-      el.pinNoteBtn.style.color = meta.pinned ? 'var(--amber-500)' : 'var(--text-muted)';
-      el.trashedNoteNoticeBar.classList.toggle('hidden', !meta.trashed);
     }
 
     function updateTotalSizeBadge() {
@@ -3939,198 +4372,78 @@
     }
 
     function updateLruStatusBadge() {
-      // メタデータおよびキャッシュ上限の整合維持用フック
+      updateGdriveStatusUI();
     }
 
     function updateGdriveStatusUI() {
+      const dirtyCount = state.notes.filter(n => (n.syncStatus === 'dirty' || n.syncStatus === 'local_only') && (!n.trashed || n.gdriveFileId)).length;
       const connected = isGdriveConnected();
-      const hasClientId = Boolean(state.gdriveClientId);
-      const dirtyCount = state.notes.filter(n => !n.trashed && (n.syncStatus === 'dirty' || n.syncStatus === 'local_only')).length;
 
-      if (el.pendingUploadCountBadge) {
+      el.gdriveTransferActions.classList.toggle('hidden', !state.gdriveClientId);
+      if (dirtyCount > 0) {
         el.pendingUploadCountBadge.textContent = String(dirtyCount);
-        el.pendingUploadCountBadge.classList.toggle('hidden', dirtyCount === 0);
-      }
-      if (el.uploadGdriveNowBtn) {
-        el.uploadGdriveNowBtn.disabled = state.isGdriveSyncing;
-      }
-      if (el.downloadGdriveNowBtn) {
-        el.downloadGdriveNowBtn.disabled = state.isGdriveSyncing;
-      }
-
-      if (connected) {
-        el.storageFolderName.textContent = `📁 ${state.gdriveFolderName}`;
-        el.connectGdriveBtnText.textContent = 'Googleドライブ接続済み';
-        el.gdriveTransferActions.classList.remove('hidden');
-      } else if (hasClientId) {
-        el.storageFolderName.textContent = `📁 ${state.gdriveFolderName}（要ログイン）`;
-        el.connectGdriveBtnText.textContent = 'Googleドライブに再接続';
-        el.gdriveTransferActions.classList.add('hidden');
+        el.pendingUploadCountBadge.classList.remove('hidden');
       } else {
-        el.storageFolderName.textContent = 'PC・スマホから直接クラウド同期';
+        el.pendingUploadCountBadge.classList.add('hidden');
+      }
+
+      if (!state.gdriveClientId) {
+        el.storageFolderName.textContent = 'Googleドライブ未設定 (⚙️で設定)';
         el.connectGdriveBtnText.textContent = 'Googleドライブに接続';
-        el.gdriveTransferActions.classList.add('hidden');
+        el.connectGdriveBtn.className = 'btn btn-sky';
+      } else if (state.isGdriveSyncing) {
+        el.storageFolderName.textContent = `📁 ${state.gdriveFolderName}（通信中...）`;
+        el.connectGdriveBtnText.textContent = '通信中...';
+      } else if (connected) {
+        el.storageFolderName.textContent = `🟢 ${state.gdriveFolderName}${dirtyCount > 0 ? ` (未送信:${dirtyCount})` : ''}`;
+        el.connectGdriveBtnText.textContent = '再認証・接続確認';
+        el.connectGdriveBtn.className = 'btn btn-surface';
+      } else {
+        el.storageFolderName.textContent = `📁 ${state.gdriveFolderName}${dirtyCount > 0 ? ` (未送信:${dirtyCount})` : ''}`;
+        el.connectGdriveBtnText.textContent = 'Googleドライブに接続';
+        el.connectGdriveBtn.className = 'btn btn-sky';
       }
     }
 
-    function renderAll() {
-      updateSortControlsUI();
-      updateTotalSizeBadge();
-      updateLruStatusBadge();
-      updateGdriveStatusUI();
-      renderSidebar();
-      renderNotebookSelectOptions();
-      renderNotesList();
-    }
-
-    /* ==========================================================================
-       12. ノート間リンク（[[ クイック挿入・クリック遷移）＆ Ctrl+K クイックジャンプ
-       ========================================================================== */
-    function insertInternalNoteLinkChip(targetMeta) {
-      const a = document.createElement('a');
-      a.href = `#note:${targetMeta.id}`;
-      a.dataset.noteId = targetMeta.id;
-      a.className = 'loosenote-internal-link';
-      a.contentEditable = 'false';
-      a.textContent = `📝 ${targetMeta.title || '無題のノート'}`;
-      insertNodeAtEditorCursor(a);
-      const space = document.createTextNode(' ');
-      a.after(space);
-      scheduleSaveActiveNote();
-    }
-
-    function showNoteLinkPickerWithFilter() {
-      const candidates = state.notes.filter(n => !n.trashed && n.id !== state.activeNoteId);
-      openCustomModal({
-        title: '🔗 他のノートへの内部リンクを挿入',
-        message: 'クリックすると現在位置にノートリンクチップを挿入します。',
-        bodyHtml: `
-          <input type="text" id="modal-nl-search" class="field-input" placeholder="タイトルで検索..." style="margin-bottom:10px;">
-          <div id="modal-nl-list" style="max-height:240px;overflow-y:auto;display:flex;flex-direction:column;gap:4px;"></div>
-        `,
-        actions: [{ label: 'キャンセル', className: 'btn btn-muted', value: 'close' }]
+    function renderNotebookSelectOptions() {
+      const current = el.noteNotebookSelect.value;
+      const options = [`<option value="">未分類 (インボックス)</option>`];
+      state.notebooks.filter(nb => !nb.endsWith('/')).forEach(nb => {
+        options.push(`<option value="${escapeHtml(nb)}">${escapeHtml(nb)}</option>`);
       });
-      const input = el.modalBody.querySelector('#modal-nl-search');
-      const listEl = el.modalBody.querySelector('#modal-nl-list');
-      const renderList = (q = '') => {
-        const filtered = candidates.filter(n => (n.title || '無題のノート').toLowerCase().includes(q.toLowerCase())).slice(0, 40);
-        listEl.innerHTML = filtered.length === 0
-          ? `<div style="padding:16px;text-align:center;color:var(--text-faint);font-size:12px;">候補がありません</div>`
-          : filtered.map(n => `
-              <button type="button" class="wiki-link-item" data-pick-id="${n.id}">
-                <span class="truncate" style="font-weight:600;">📝 ${escapeHtml(n.title || '無題のノート')}</span>
-                <span style="font-size:11px;color:var(--text-faint);">${escapeHtml(n.notebook || '')}</span>
-              </button>
-            `).join('');
-        listEl.querySelectorAll('[data-pick-id]').forEach(btn => {
-          btn.addEventListener('click', () => {
-            const target = candidates.find(c => c.id === btn.dataset.pickId);
-            closeActiveCustomModal(null);
-            if (target) insertInternalNoteLinkChip(target);
-          });
-        });
-      };
-      renderList();
-      input.addEventListener('input', () => renderList(input.value));
+      el.noteNotebookSelect.innerHTML = options.join('');
+      if (current) el.noteNotebookSelect.value = current;
     }
 
-    function openQuickJumpModal() {
-      const candidates = state.notes.filter(n => !n.trashed);
-      openCustomModal({
-        title: '⚡ クイックジャンプ (Ctrl+K / Cmd+K)',
-        message: 'ノート名・ノートブック・タグで瞬時に切り替えます。',
-        bodyHtml: `
-          <input type="text" id="modal-qj-search" class="field-input" placeholder="移動先のノート名を入力..." style="margin-bottom:10px;">
-          <div id="modal-qj-list" style="max-height:260px;overflow-y:auto;display:flex;flex-direction:column;gap:4px;"></div>
-        `,
-        actions: [{ label: '閉じる', className: 'btn btn-muted', value: 'close' }]
-      });
-      const input = el.modalBody.querySelector('#modal-qj-search');
-      const listEl = el.modalBody.querySelector('#modal-qj-list');
-      const renderList = (q = '') => {
-        const kw = q.trim().toLowerCase();
-        const filtered = candidates.filter(n => !kw || `${n.title} ${n.notebook} ${(n.tags || []).join(' ')}`.toLowerCase().includes(kw)).slice(0, 40);
-        listEl.innerHTML = filtered.map(n => `
-          <button type="button" class="wiki-link-item" data-jump-id="${n.id}">
-            <span class="truncate" style="font-weight:600;">${n.pinned ? '📌 ' : ''}${escapeHtml(n.title || '無題のノート')}</span>
-            <span style="font-size:11px;color:var(--text-faint);">${escapeHtml(n.notebook || '未分類')}</span>
-          </button>
-        `).join('');
-        listEl.querySelectorAll('[data-jump-id]').forEach(btn => {
-          btn.addEventListener('click', () => {
-            closeActiveCustomModal(null);
-            selectNote(btn.dataset.jumpId);
-          });
-        });
-      };
-      renderList();
-      input.addEventListener('input', () => renderList(input.value));
-      input.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') {
-          const first = listEl.querySelector('[data-jump-id]');
-          if (first) first.click();
-        }
-      });
-    }
-
-    function checkWikiLinkTrigger() {
-      const sel = window.getSelection();
-      if (!sel || !sel.isCollapsed || sel.rangeCount === 0) {
-        el.noteLinkPopup.classList.add('hidden');
-        return;
-      }
-      const range = sel.getRangeAt(0);
-      const node = range.startContainer;
-      if (node.nodeType !== Node.TEXT_NODE) {
-        el.noteLinkPopup.classList.add('hidden');
-        return;
-      }
-      const beforeText = node.textContent.slice(0, range.startOffset);
-      const match = beforeText.match(/\[\[([^\[\]\n]{0,30})$/);
-      if (!match) {
-        el.noteLinkPopup.classList.add('hidden');
-        return;
-      }
-      const query = match[1].toLowerCase();
-      const matches = state.notes
-        .filter(n => !n.trashed && n.id !== state.activeNoteId && (n.title || '無題のノート').toLowerCase().includes(query))
-        .slice(0, 8);
-
-      if (matches.length === 0) {
-        el.noteLinkPopup.classList.add('hidden');
-        return;
-      }
-
-      const rect = range.getBoundingClientRect();
-      el.noteLinkPopup.style.left = `${Math.min(window.innerWidth - 305, Math.max(12, rect.left))}px`;
-      el.noteLinkPopup.style.top = `${Math.min(window.innerHeight - 240, rect.bottom + 6)}px`;
-      el.noteLinkPopup.innerHTML = matches.map(m => `
-        <button type="button" class="wiki-link-item" data-wiki-id="${m.id}">
-          <span class="truncate">📝 ${escapeHtml(m.title || '無題のノート')}</span>
-        </button>
+    function renderActiveNoteTags(meta) {
+      el.activeNoteTags.innerHTML = (meta.tags || []).map(tag => `
+        <span class="badge badge-brand" style="font-size:11px;padding:3px 8px;">
+          #${escapeHtml(tag)}
+          <button type="button" data-remove-tag="${escapeHtml(tag)}" style="margin-left:3px;font-weight:700;opacity:0.75;">×</button>
+        </span>
       `).join('');
-      el.noteLinkPopup.classList.remove('hidden');
-
-      el.noteLinkPopup.querySelectorAll('[data-wiki-id]').forEach(btn => {
-        btn.addEventListener('mousedown', (e) => {
-          e.preventDefault();
-          const target = state.notes.find(n => n.id === btn.dataset.wikiId);
-          if (!target) return;
-          const startPos = range.startOffset - match[0].length;
-          const replaceRange = document.createRange();
-          replaceRange.setStart(node, Math.max(0, startPos));
-          replaceRange.setEnd(node, range.startOffset);
-          sel.removeAllRanges();
-          sel.addRange(replaceRange);
-          insertInternalNoteLinkChip(target);
-          el.noteLinkPopup.classList.add('hidden');
+      el.activeNoteTags.querySelectorAll('[data-remove-tag]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const targetTag = btn.dataset.removeTag;
+          meta.tags = (meta.tags || []).filter(t => t !== targetTag);
+          renderActiveNoteTags(meta);
+          scheduleSaveActiveNote();
         });
       });
     }
 
-    /* ==========================================================================
-       13. モバイルドロワー・テーマ・イベントバインド・アプリ初期化
-       ========================================================================== */
+    function updateEditorHeaderMeta(meta) {
+      el.noteCreatedDisplay.textContent = `作成: ${formatDate(meta.created)}`;
+      el.noteUpdatedDisplay.textContent = `更新: ${formatDate(meta.updated)}`;
+      el.noteCharCountDisplay.textContent = `${meta.charCount || 0} 文字`;
+      el.noteSizeDisplay.textContent = formatBytes(meta.byteSize || 0);
+    }
+
+    function updatePinAndTrashUI(meta) {
+      el.pinNoteBtn.style.color = meta.pinned ? 'var(--amber-500)' : 'var(--text-muted)';
+      el.trashedNoteNoticeBar.classList.toggle('hidden', !meta.trashed);
+    }
+
     function openMobileSidebar() {
       el.leftSidebar.classList.add('open');
       el.sidebarBackdrop.classList.remove('hidden');
@@ -4141,94 +4454,198 @@
       el.sidebarBackdrop.classList.add('hidden');
     }
 
-    function applyTheme(isDark) {
-      document.documentElement.classList.toggle('dark', isDark);
-      el.themeIconSun.classList.toggle('hidden', !isDark);
-      el.themeIconMoon.classList.toggle('hidden', isDark);
-      safeStorage.setItem('loosenote-theme', isDark ? 'dark' : 'light');
-      applyDarkModeReadabilityFix(el.noteRichEditor);
+    /* ==========================================================================
+       12. ノート間リンク（[[ クイック入力 ＆ モーダル選択）
+       ========================================================================== */
+    function createInternalNoteLinkHtml(targetMeta) {
+      const safeTitle = escapeHtml(targetMeta.title || '無題のノート');
+      return `<a href="#note/${encodeURIComponent(targetMeta.id)}" data-note-id="${escapeHtml(targetMeta.id)}" class="loosenote-internal-link" contenteditable="false">📄 ${safeTitle}</a>&nbsp;`;
+    }
+
+    async function openInsertNoteLinkModal() {
+      const candidates = state.notes.filter(n => !n.trashed && n.id !== state.activeNoteId);
+      if (candidates.length === 0) {
+        showToast('リンク先に指定できる他のノートがありません', 'info');
+        return;
+      }
+      await openCustomModal({
+        title: '🔗 他のノートへのリンクを挿入',
+        message: '本文中の現在のカーソル位置に、指定したノートへワンクリック移動できるリンクチップを挿入します（本文中で [[ と入力しても選べます）。',
+        bodyHtml: `
+          <div style="display:flex;flex-direction:column;gap:8px;">
+            <input type="text" id="modal-notelink-search" class="field-input" placeholder="ノートタイトルで絞り込み...">
+            <div id="modal-notelink-list" style="max-height:240px;overflow-y:auto;display:flex;flex-direction:column;gap:4px;"></div>
+          </div>
+        `,
+        actions: [{ label: '閉じる', className: 'btn btn-muted', value: 'close' }]
+      });
+    }
+
+    function checkWikiLinkTrigger() {
+      const sel = window.getSelection();
+      if (!sel || !sel.rangeCount || !sel.isCollapsed) {
+        el.noteLinkPopup.classList.add('hidden');
+        state.wikiLinkState = null;
+        return;
+      }
+      const range = sel.getRangeAt(0);
+      const node = range.startContainer;
+      if (node.nodeType !== Node.TEXT_NODE || !el.noteRichEditor.contains(node)) {
+        el.noteLinkPopup.classList.add('hidden');
+        state.wikiLinkState = null;
+        return;
+      }
+      const textBefore = node.textContent.slice(0, range.startOffset);
+      const match = textBefore.match(/\[\[([^\[\]\n]{0,30})$/);
+      if (!match) {
+        el.noteLinkPopup.classList.add('hidden');
+        state.wikiLinkState = null;
+        return;
+      }
+
+      const keyword = match[1].toLowerCase();
+      const matches = state.notes
+        .filter(n => !n.trashed && n.id !== state.activeNoteId && (n.title || '無題のノート').toLowerCase().includes(keyword))
+        .slice(0, 8);
+
+      if (matches.length === 0) {
+        el.noteLinkPopup.classList.add('hidden');
+        state.wikiLinkState = null;
+        return;
+      }
+
+      state.wikiLinkState = { textNode: node, startOffset: range.startOffset - match[0].length, endOffset: range.startOffset };
+      const rect = range.getBoundingClientRect();
+      el.noteLinkPopup.style.left = `${Math.max(12, Math.min(window.innerWidth - 310, rect.left || 40))}px`;
+      el.noteLinkPopup.style.top = `${Math.min(window.innerHeight - 240, (rect.bottom || 180) + 6)}px`;
+      el.noteLinkPopup.innerHTML = matches.map(m => `
+        <button type="button" class="wiki-link-item" data-wiki-target="${m.id}">
+          <span class="truncate">📄 ${escapeHtml(m.title || '無題のノート')}</span>
+          <span style="font-size:10px;color:var(--text-faint);flex-shrink:0;">${escapeHtml(m.notebook || '')}</span>
+        </button>
+      `).join('');
+      el.noteLinkPopup.classList.remove('hidden');
+
+      el.noteLinkPopup.querySelectorAll('[data-wiki-target]').forEach(btn => {
+        btn.addEventListener('mousedown', (e) => {
+          e.preventDefault();
+          const target = state.notes.find(n => n.id === btn.dataset.wikiTarget);
+          if (!target || !state.wikiLinkState) return;
+          const r = document.createRange();
+          r.setStart(state.wikiLinkState.textNode, state.wikiLinkState.startOffset);
+          r.setEnd(state.wikiLinkState.textNode, state.wikiLinkState.endOffset);
+          sel.removeAllRanges();
+          sel.addRange(r);
+          document.execCommand('insertHTML', false, createInternalNoteLinkHtml(target));
+          el.noteLinkPopup.classList.add('hidden');
+          state.wikiLinkState = null;
+          scheduleSaveActiveNote();
+        });
+      });
+    }
+
+    /* ==========================================================================
+       13. クイックジャンプ（Ctrl+K / Cmd+K）＆ ノートブック・一括操作モーダル
+       ========================================================================== */
+    async function openQuickJumpModal() {
+      let query = '';
+      const modalPromise = openCustomModal({
+        title: '⚡ クイックジャンプ (Ctrl+K)',
+        bodyHtml: `
+          <div style="display:flex;flex-direction:column;gap:10px;">
+            <input type="text" id="qj-input" class="field-input" placeholder="移動先のノートタイトル・タグを検索...">
+            <div id="qj-results" style="max-height:280px;overflow-y:auto;display:flex;flex-direction:column;gap:4px;"></div>
+          </div>
+        `,
+        actions: [{ label: '閉じる', className: 'btn btn-muted', value: 'close' }]
+      });
+
+      function renderQj() {
+        const inputEl = document.getElementById('qj-input');
+        const resEl = document.getElementById('qj-results');
+        if (!inputEl || !resEl) return;
+        const tokens = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+        const hits = state.notes.filter(n => !n.trashed && tokens.every(tk => `${n.title} ${n.notebook} ${(n.tags || []).join(' ')} ${n.snippet}`.toLowerCase().includes(tk))).slice(0, 20);
+        resEl.innerHTML = hits.map(h => `
+          <button type="button" class="wiki-link-item" data-qj-id="${h.id}">
+            <span class="truncate" style="font-weight:600;">${escapeHtml(h.title || '無題のノート')}</span>
+            <span style="font-size:11px;color:var(--text-faint);">${escapeHtml(h.notebook || '未分類')}</span>
+          </button>
+        `).join('') || `<div style="padding:16px;text-align:center;color:var(--text-faint);font-size:12px;">一致するノートがありません</div>`;
+        resEl.querySelectorAll('[data-qj-id]').forEach(btn => {
+          btn.addEventListener('click', () => {
+            const id = btn.dataset.qjId;
+            closeActiveCustomModal('jump');
+            selectNote(id);
+          });
+        });
+      }
+
+      const inp = document.getElementById('qj-input');
+      if (inp) {
+        inp.addEventListener('input', (e) => { query = e.target.value; renderQj(); });
+        renderQj();
+      }
+      await modalPromise;
     }
 
     async function openCreateNotebookModal() {
       const existingStacks = getAllStackNames();
-      const defaultStack = state.activeFilter.startsWith('stack:')
-        ? state.activeFilter.slice(6)
-        : (state.activeFilter.startsWith('nb:') && state.activeFilter.slice(3).includes('/')
-          ? state.activeFilter.slice(3).split('/')[0]
-          : '');
-      const activeMeta = getActiveNoteMeta();
+      const stackDatalistHtml = existingStacks.map(st => `<option value="${escapeHtml(st)}">`).join('');
 
       await openCustomModal({
-        title: '📁 新しいノートブック / スタックを作成',
-        message: 'スタック名を指定すると階層グループを作成できます。スラッシュ（/）区切り（例: 仕事/議事録）でも入力できます。',
+        title: '📁 新しいノートブック・スタックを作成',
+        message: 'スタック（親フォルダ）とノートブック名を指定して作成できます。既存のスタックにまとめたい場合は、上の欄でスタック名を選択・入力してください。',
         bodyHtml: `
-          <div style="display:flex;flex-direction:column;gap:10px;">
+          <div style="display:flex;flex-direction:column;gap:12px;">
             <div>
-              <label class="field-label">スタック名（任意：既存選択または新規入力）</label>
-              <input type="text" id="modal-nb-stack" class="field-input" list="modal-create-stack-list" value="${escapeHtml(defaultStack)}" placeholder="例: 仕事（空欄なら単独ノートブック）">
-              <datalist id="modal-create-stack-list">${existingStacks.map(st => `<option value="${escapeHtml(st)}">`).join('')}</datalist>
+              <label class="field-label">所属スタック（任意：空欄ならトップ階層）</label>
+              <input type="text" id="modal-new-stack-name" list="existing-stacks-datalist" class="field-input" placeholder="例: 仕事 / 趣味 / 学習（空欄可）">
+              <datalist id="existing-stacks-datalist">${stackDatalistHtml}</datalist>
             </div>
             <div>
               <label class="field-label">ノートブック名（スタックのみ先に作る場合は空欄可）</label>
-              <input type="text" id="modal-nb-name" class="field-input" placeholder="例: 議事録 または プライベート">
+              <input type="text" id="modal-new-nb-name" class="field-input" placeholder="例: 議事録 / レシピ">
             </div>
-            ${activeMeta ? `
-              <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-sub);cursor:pointer;margin-top:2px;">
-                <input type="checkbox" id="modal-nb-assign-active" checked>
-                <span>現在開いているノートをこのノートブックへ移動する</span>
-              </label>
-            ` : ''}
           </div>
         `,
         actions: [
           {
-            label: '作成する',
+            label: '作成',
             className: 'btn btn-brand',
             onClick: async (bodyEl) => {
-              const rawStack = bodyEl.querySelector('#modal-nb-stack').value.trim().replace(/^\/+|\/+$/g, '');
-              const rawName = bodyEl.querySelector('#modal-nb-name').value.trim().replace(/^\/+|\/+$/g, '');
-              if (!rawStack && !rawName) {
+              const stackRaw = bodyEl.querySelector('#modal-new-stack-name').value.trim().replace(/^\/+|\/+$/g, '');
+              const nbRaw = bodyEl.querySelector('#modal-new-nb-name').value.trim().replace(/^\/+|\/+$/g, '');
+              if (!stackRaw && !nbRaw) {
                 showToast('スタック名またはノートブック名を入力してください', 'warning');
                 return false;
               }
-
-              let fullPath = '';
-              let isStackOnly = false;
-              if (!rawStack && rawName.includes('/')) {
-                fullPath = rawName.split('/').map(s => s.trim()).filter(Boolean).join('/');
-              } else if (rawStack && rawName) {
-                const cleanStack = rawStack.replace(/\//g, '_');
-                fullPath = `${cleanStack}/${rawName}`;
-              } else if (rawStack && !rawName) {
-                const cleanStack = rawStack.replace(/\//g, '_');
-                fullPath = `${cleanStack}/`;
-                isStackOnly = true;
-              } else {
-                fullPath = rawName;
-              }
+              const fullPath = stackRaw && nbRaw
+                ? `${stackRaw}/${nbRaw}`
+                : (stackRaw ? `${stackRaw}/` : nbRaw);
 
               if (!state.customNotebooks.includes(fullPath)) {
                 state.customNotebooks.push(fullPath);
+                await saveCustomNotebooks();
               }
-              await saveCustomNotebooks();
               rebuildNotebooksFromNotes();
-
-              const assignCb = bodyEl.querySelector('#modal-nb-assign-active');
-              const meta = getActiveNoteMeta();
-              if (!isStackOnly && meta && assignCb && assignCb.checked) {
-                meta.notebook = fullPath;
-                scheduleSaveActiveNote();
-              }
-
-              renderNotebookSelectOptions();
-              if (meta) {
-                el.noteNotebookSelect.value = meta.notebook || '';
-                el.editCurrentNotebookInlineBtn.classList.toggle('hidden', !meta.notebook);
-              }
               renderSidebar();
-              showToast(isStackOnly
-                ? `スタック「${fullPath.slice(0, -1)}」を作成しました`
-                : `ノートブック「${fullPath}」を作成しました`, 'success');
+              renderNotebookSelectOptions();
+              if (!fullPath.endsWith('/')) {
+                const meta = getActiveNoteMeta();
+                if (meta) {
+                  meta.notebook = fullPath;
+                  el.noteNotebookSelect.value = fullPath;
+                  el.editCurrentNotebookInlineBtn.classList.remove('hidden');
+                  scheduleSaveActiveNote();
+                }
+                setActiveFilter(`nb:${fullPath}`);
+                showToast(`ノートブック「${fullPath}」を作成しました`, 'success');
+              } else {
+                const stName = fullPath.slice(0, -1);
+                setActiveFilter(`stack:${stName}`);
+                showToast(`スタック「${stName}」を作成しました`, 'success');
+              }
             }
           },
           { label: 'キャンセル', className: 'btn btn-muted', value: 'cancel' }
@@ -4236,75 +4653,134 @@
       });
     }
 
-    async function openEditNotebookModal(targetNotebook) {
-      if (!targetNotebook) return;
-      const parts = targetNotebook.split('/');
-      const currentStack = parts.length > 1 ? parts[0] : '';
-      const currentName = parts.length > 1 ? parts.slice(1).join('/') : targetNotebook;
+    async function renameNotebookPath(oldPath, newPath) {
+      if (!oldPath || !newPath || oldPath === newPath) return;
+      const affectedNotes = [];
+      for (const n of state.notes) {
+        if (n.notebook === oldPath) {
+          n.notebook = newPath;
+          n.syncStatus = 'dirty';
+          await saveNoteMetaAndBodyToDB(n, null, true);
+          affectedNotes.push(n);
+        }
+      }
+      state.customNotebooks = (state.customNotebooks || [])
+        .map(nb => (nb === oldPath ? newPath : nb))
+        .filter(Boolean);
+      if (!state.customNotebooks.includes(newPath)) {
+        state.customNotebooks.push(newPath);
+      }
+      await saveCustomNotebooks();
+      rebuildNotebooksFromNotes();
+
+      if (state.activeFilter === `nb:${oldPath}`) {
+        state.activeFilter = `nb:${newPath}`;
+        el.currentViewLabel.textContent = `📓 ${newPath}`;
+      }
+      const activeMeta = getActiveNoteMeta();
+      renderNotebookSelectOptions();
+      if (activeMeta) {
+        el.noteNotebookSelect.value = activeMeta.notebook || '';
+        el.editCurrentNotebookInlineBtn.classList.toggle('hidden', !activeMeta.notebook);
+      }
+      renderAll();
+
+      const syncedToCloud = await syncFolderMigrationToGdrive({
+        oldPaths: [oldPath],
+        newPath,
+        affectedNotes
+      });
+      renderAll();
+      showToast(
+        syncedToCloud
+          ? `ノートブック名を「${newPath}」へ変更し、Googleドライブ上のフォルダとデータも移動しました（対象ノート ${affectedNotes.length}件）`
+          : `ノートブック名を「${newPath}」へ変更しました（対象ノート ${affectedNotes.length}件）`,
+        'success'
+      );
+    }
+
+    async function deleteOrDissolveNotebook(targetPath) {
+      if (!targetPath) return;
+      const targetNotes = state.notes.filter(n => n.notebook === targetPath);
+      for (const n of targetNotes) {
+        n.notebook = '';
+        n.syncStatus = 'dirty';
+        await saveNoteMetaAndBodyToDB(n, null, true);
+      }
+      state.customNotebooks = (state.customNotebooks || []).filter(nb => nb !== targetPath);
+      await saveCustomNotebooks();
+      rebuildNotebooksFromNotes();
+
+      if (state.activeFilter === `nb:${targetPath}`) {
+        setActiveFilter('all');
+      } else {
+        renderAll();
+      }
+      const activeMeta = getActiveNoteMeta();
+      renderNotebookSelectOptions();
+      if (activeMeta) {
+        el.noteNotebookSelect.value = activeMeta.notebook || '';
+        el.editCurrentNotebookInlineBtn.classList.toggle('hidden', !activeMeta.notebook);
+      }
+
+      const syncedToCloud = await syncFolderMigrationToGdrive({
+        oldPaths: [targetPath],
+        newPath: '',
+        affectedNotes: targetNotes
+      });
+      renderAll();
+      showToast(
+        syncedToCloud
+          ? `ノートブック「${targetPath}」をGoogleドライブからも削除し、中身のノート(${targetNotes.length}件)を未分類へ移動しました`
+          : `ノートブック「${targetPath}」を削除し、中身のノート(${targetNotes.length}件)を未分類へ移動しました`,
+        'info'
+      );
+    }
+
+    async function openEditNotebookModal(oldPath) {
+      if (!oldPath) return;
+      const slashIdx = oldPath.indexOf('/');
+      const initialStack = slashIdx !== -1 ? oldPath.slice(0, slashIdx) : '';
+      const initialName = slashIdx !== -1 ? oldPath.slice(slashIdx + 1) : oldPath;
       const existingStacks = getAllStackNames();
+      const stackDatalistHtml = existingStacks.map(st => `<option value="${escapeHtml(st)}">`).join('');
 
       await openCustomModal({
-        title: '✎ ノートブック名・スタックの変更',
-        message: `「${targetNotebook}」の名称や所属スタックを変更します（配下の全ノートとGoogleドライブ同期先にも自動反映されます）。`,
+        title: '✎ ノートブック名・スタック所属を編集',
+        message: `対象: 「${oldPath}」\n名前を変更したり、別のスタック配下への移動・スタックからの独立ができます。`,
         bodyHtml: `
-          <div style="display:flex;flex-direction:column;gap:10px;">
+          <div style="display:flex;flex-direction:column;gap:12px;">
             <div>
-              <label class="field-label">所属スタック名（空欄にするとスタックから外れます）</label>
-              <input type="text" id="modal-edit-nb-stack" class="field-input" list="modal-edit-stack-list" value="${escapeHtml(currentStack)}" placeholder="例: 仕事">
-              <datalist id="modal-edit-stack-list">${existingStacks.map(st => `<option value="${escapeHtml(st)}">`).join('')}</datalist>
+              <label class="field-label">所属スタック（空欄にするとスタックから独立します）</label>
+              <input type="text" id="modal-edit-nb-stack" list="edit-stacks-datalist" class="field-input" value="${escapeHtml(initialStack)}" placeholder="例: 仕事 / プロジェクト（空欄可）">
+              <datalist id="edit-stacks-datalist">${stackDatalistHtml}</datalist>
             </div>
             <div>
               <label class="field-label">ノートブック名</label>
-              <input type="text" id="modal-edit-nb-name" class="field-input" value="${escapeHtml(currentName)}" placeholder="ノートブック名">
+              <input type="text" id="modal-edit-nb-name" class="field-input" value="${escapeHtml(initialName)}" placeholder="ノートブック名">
             </div>
           </div>
         `,
         actions: [
           {
-            label: '変更を保存',
+            label: '保存して変更',
             className: 'btn btn-brand',
             onClick: async (bodyEl) => {
-              const newStack = bodyEl.querySelector('#modal-edit-nb-stack').value.trim().replace(/\//g, '_');
-              const newName = bodyEl.querySelector('#modal-edit-nb-name').value.trim().replace(/^\/+|\/+$/g, '');
-              if (!newName) {
+              const nextStack = bodyEl.querySelector('#modal-edit-nb-stack').value.trim().replace(/^\/+|\/+$/g, '');
+              const nextName = bodyEl.querySelector('#modal-edit-nb-name').value.trim().replace(/^\/+|\/+$/g, '');
+              if (!nextName) {
                 showToast('ノートブック名を入力してください', 'warning');
                 return false;
               }
-              const nextFullPath = newStack ? `${newStack}/${newName}` : newName;
-              if (nextFullPath === targetNotebook) return;
-
-              const updatedAt = new Date().toISOString();
-              let movedNotesCount = 0;
-              for (const n of state.notes) {
-                if (n.notebook === targetNotebook) {
-                  n.notebook = nextFullPath;
-                  n.updated = updatedAt;
-                  n.syncStatus = 'dirty';
-                  await saveNoteMetaAndBodyToDB(n, null, true);
-                  enqueueCloudUpload(n.id);
-                  movedNotesCount++;
-                }
-              }
-
-              state.customNotebooks = state.customNotebooks.map(nb => nb === targetNotebook ? nextFullPath : nb);
-              if (!state.customNotebooks.includes(nextFullPath)) {
-                state.customNotebooks.push(nextFullPath);
-              }
-              await saveCustomNotebooks();
-              rebuildNotebooksFromNotes();
-
-              if (state.activeFilter === `nb:${targetNotebook}`) {
-                state.activeFilter = `nb:${nextFullPath}`;
-                el.currentViewLabel.textContent = `ノートブック: ${nextFullPath}`;
-              }
-
-              const activeMeta = getActiveNoteMeta();
-              renderAll();
-              if (activeMeta) {
-                el.noteNotebookSelect.value = activeMeta.notebook || '';
-                el.editCurrentNotebookInlineBtn.classList.toggle('hidden', !activeMeta.notebook);
-              }
-              showToast(`「${nextFullPath}」へ変更しました（対象ノート ${movedNotesCount} 件）`, 'success');
+              const nextPath = nextStack ? `${nextStack}/${nextName}` : nextName;
+              await renameNotebookPath(oldPath, nextPath);
+            }
+          },
+          {
+            label: '🗑️ このノートブックを削除（ノートは未分類へ）',
+            className: 'btn btn-danger',
+            onClick: async () => {
+              await deleteOrDissolveNotebook(oldPath);
             }
           },
           { label: 'キャンセル', className: 'btn btn-muted', value: 'cancel' }
@@ -4312,15 +4788,15 @@
       });
     }
 
-    async function openEditStackModal(stackName) {
-      if (!stackName) return;
+    async function openEditStackModal(oldStackName) {
+      if (!oldStackName) return;
       await openCustomModal({
-        title: '✎ スタック名の変更',
-        message: `スタック「${stackName}」の名称を変更すると、配下のすべてのノートブックとノートが一括で新しいスタックへ移動します。`,
+        title: '🗂️ スタック名を変更・解除',
+        message: `対象スタック: 「${oldStackName}」\n配下のすべてのノートブックの所属スタック名が一括で更新されます。`,
         bodyHtml: `
           <div>
             <label class="field-label">新しいスタック名</label>
-            <input type="text" id="modal-rename-stack-input" class="field-input" value="${escapeHtml(stackName)}" placeholder="新しいスタック名">
+            <input type="text" id="modal-rename-stack-input" class="field-input" value="${escapeHtml(oldStackName)}">
           </div>
         `,
         actions: [
@@ -4328,167 +4804,196 @@
             label: 'スタック名を変更',
             className: 'btn btn-brand',
             onClick: async (bodyEl) => {
-              const newStack = bodyEl.querySelector('#modal-rename-stack-input').value.trim().replace(/\//g, '_');
+              const newStack = bodyEl.querySelector('#modal-rename-stack-input').value.trim().replace(/^\/+|\/+$/g, '');
               if (!newStack) {
-                showToast('スタック名を入力してください', 'warning');
+                showToast('新しいスタック名を入力してください', 'warning');
                 return false;
               }
-              if (newStack === stackName) return;
+              if (newStack === oldStackName) return;
 
-              const prefix = `${stackName}/`;
-              const updatedAt = new Date().toISOString();
-              let updatedNotesCount = 0;
+              const oldPathsSet = new Set([oldStackName]);
+              (state.notebooks || []).forEach(nb => {
+                const clean = nb.replace(/\/+$/, '');
+                if (clean === oldStackName || clean.startsWith(`${oldStackName}/`)) {
+                  oldPathsSet.add(clean);
+                }
+              });
 
+              const affectedNotes = [];
+              const noteTargetPaths = new Map();
               for (const n of state.notes) {
-                if (n.notebook && n.notebook.startsWith(prefix)) {
-                  n.notebook = `${newStack}/${n.notebook.slice(prefix.length)}`;
-                  n.updated = updatedAt;
+                if (n.notebook === oldStackName) {
+                  oldPathsSet.add(n.notebook);
+                  n.notebook = newStack;
                   n.syncStatus = 'dirty';
                   await saveNoteMetaAndBodyToDB(n, null, true);
-                  enqueueCloudUpload(n.id);
-                  updatedNotesCount++;
+                  affectedNotes.push(n);
+                  noteTargetPaths.set(n.id, newStack);
+                } else if (n.notebook && n.notebook.startsWith(`${oldStackName}/`)) {
+                  oldPathsSet.add(n.notebook);
+                  n.notebook = `${newStack}/${n.notebook.slice(oldStackName.length + 1)}`;
+                  n.syncStatus = 'dirty';
+                  await saveNoteMetaAndBodyToDB(n, null, true);
+                  affectedNotes.push(n);
+                  noteTargetPaths.set(n.id, n.notebook);
                 }
               }
-
-              state.customNotebooks = state.customNotebooks.map(nb => {
-                if (nb === prefix) return `${newStack}/`;
-                if (nb.startsWith(prefix)) return `${newStack}/${nb.slice(prefix.length)}`;
+              state.customNotebooks = (state.customNotebooks || []).map(nb => {
+                if (nb === `${oldStackName}/`) return `${newStack}/`;
+                if (nb === oldStackName) return newStack;
+                if (nb.startsWith(`${oldStackName}/`)) return `${newStack}/${nb.slice(oldStackName.length + 1)}`;
                 return nb;
               });
               await saveCustomNotebooks();
               rebuildNotebooksFromNotes();
-
-              if (state.activeFilter === `stack:${stackName}`) {
+              if (state.activeFilter === `stack:${oldStackName}`) {
                 state.activeFilter = `stack:${newStack}`;
-                el.currentViewLabel.textContent = `スタック: ${newStack}`;
-              } else if (state.activeFilter.startsWith(`nb:${prefix}`)) {
-                const sub = state.activeFilter.slice(`nb:${prefix}`.length);
-                state.activeFilter = `nb:${newStack}/${sub}`;
-                el.currentViewLabel.textContent = `ノートブック: ${newStack}/${sub}`;
+                el.currentViewLabel.textContent = `🗂️ ${newStack}`;
+              } else if (state.activeFilter.startsWith(`nb:${oldStackName}/`)) {
+                const updatedNb = `${newStack}/${state.activeFilter.slice(`nb:${oldStackName}/`.length)}`;
+                state.activeFilter = `nb:${updatedNb}`;
+                el.currentViewLabel.textContent = `📓 ${updatedNb}`;
               }
-
+              renderNotebookSelectOptions();
               const activeMeta = getActiveNoteMeta();
+              if (activeMeta) el.noteNotebookSelect.value = activeMeta.notebook || '';
               renderAll();
-              if (activeMeta) {
-                el.noteNotebookSelect.value = activeMeta.notebook || '';
-                el.editCurrentNotebookInlineBtn.classList.toggle('hidden', !activeMeta.notebook);
-              }
-              showToast(`スタック名を「${newStack}」へ変更しました（対象ノート ${updatedNotesCount} 件）`, 'success');
+
+              const syncedToCloud = await syncFolderMigrationToGdrive({
+                oldPaths: Array.from(oldPathsSet),
+                newPath: newStack,
+                affectedNotes,
+                noteTargetPaths
+              });
+              renderAll();
+              showToast(
+                syncedToCloud
+                  ? `スタック名を「${newStack}」に変更し、Googleドライブ上のフォルダとデータも更新しました`
+                  : `スタック名を「${newStack}」に変更しました`,
+                'success'
+              );
             }
           },
-          { label: 'キャンセル', className: 'btn btn-muted', value: 'cancel' }
+          {
+            label: 'スタックを解除（配下を独立ノートブック化）',
+            className: 'btn btn-muted',
+            onClick: async () => {
+              const oldPathsSet = new Set([oldStackName]);
+              (state.notebooks || []).forEach(nb => {
+                const clean = nb.replace(/\/+$/, '');
+                if (clean === oldStackName || clean.startsWith(`${oldStackName}/`)) {
+                  oldPathsSet.add(clean);
+                }
+              });
+
+              const affectedNotes = [];
+              const noteTargetPaths = new Map();
+              for (const n of state.notes) {
+                if (n.notebook && n.notebook.startsWith(`${oldStackName}/`)) {
+                  oldPathsSet.add(n.notebook);
+                  n.notebook = n.notebook.slice(oldStackName.length + 1);
+                  n.syncStatus = 'dirty';
+                  await saveNoteMetaAndBodyToDB(n, null, true);
+                  affectedNotes.push(n);
+                  noteTargetPaths.set(n.id, n.notebook);
+                } else if (n.notebook === oldStackName) {
+                  oldPathsSet.add(n.notebook);
+                  n.notebook = '';
+                  n.syncStatus = 'dirty';
+                  await saveNoteMetaAndBodyToDB(n, null, true);
+                  affectedNotes.push(n);
+                  noteTargetPaths.set(n.id, '');
+                }
+              }
+              state.customNotebooks = (state.customNotebooks || [])
+                .filter(nb => nb !== `${oldStackName}/` && nb !== oldStackName)
+                .map(nb => (nb.startsWith(`${oldStackName}/`) ? nb.slice(oldStackName.length + 1) : nb));
+              await saveCustomNotebooks();
+              rebuildNotebooksFromNotes();
+              if (state.activeFilter === `stack:${oldStackName}` || state.activeFilter.startsWith(`nb:${oldStackName}/`)) {
+                setActiveFilter('all');
+              } else {
+                renderAll();
+              }
+              renderNotebookSelectOptions();
+              const activeMeta = getActiveNoteMeta();
+              if (activeMeta) el.noteNotebookSelect.value = activeMeta.notebook || '';
+
+              const syncedToCloud = await syncFolderMigrationToGdrive({
+                oldPaths: Array.from(oldPathsSet),
+                newPath: '',
+                affectedNotes,
+                noteTargetPaths
+              });
+              renderAll();
+              showToast(
+                syncedToCloud
+                  ? `スタック「${oldStackName}」を解除し、Googleドライブ側のフォルダ構成も更新しました`
+                  : `スタック「${oldStackName}」を解除しました`,
+                'info'
+              );
+            }
+          },
+          { label: 'キャンセル', className: 'btn btn-surface', value: 'cancel' }
         ]
       });
     }
 
-    async function deleteNotebook(targetNotebook) {
-      if (!targetNotebook) return;
-      const targetNotes = state.notes.filter(n => !n.trashed && n.notebook === targetNotebook);
-      const res = await openCustomModal({
-        title: '🗑️ ノートブックを削除',
-        message: `ノートブック「${targetNotebook}」を削除しますか？\n（中に入っていたノート ${targetNotes.length} 件は削除されず「📥 未分類 (インボックス)」へ安全に移動します）`,
-        actions: [
-          { label: '削除してノートは未分類へ', className: 'btn btn-danger', value: 'delete' },
-          { label: 'キャンセル', className: 'btn btn-muted', value: 'cancel' }
-        ]
-      });
-      if (res !== 'delete') return;
-
-      const updatedAt = new Date().toISOString();
-      for (const n of state.notes) {
-        if (n.notebook === targetNotebook) {
-          n.notebook = '';
-          n.updated = updatedAt;
-          n.syncStatus = 'dirty';
-          await saveNoteMetaAndBodyToDB(n, null, true);
-          enqueueCloudUpload(n.id);
-        }
-      }
-      state.customNotebooks = state.customNotebooks.filter(nb => nb !== targetNotebook);
-      await saveCustomNotebooks();
+    function renderAll() {
       rebuildNotebooksFromNotes();
-
-      if (state.activeFilter === `nb:${targetNotebook}`) {
-        setActiveFilter('all');
-      } else {
-        renderAll();
-      }
-      const activeMeta = getActiveNoteMeta();
-      if (activeMeta) {
-        el.noteNotebookSelect.value = activeMeta.notebook || '';
-        el.editCurrentNotebookInlineBtn.classList.toggle('hidden', !activeMeta.notebook);
-      }
-      showToast(`ノートブック「${targetNotebook}」を削除しました`, 'info');
+      renderSidebar();
+      renderNotesList();
+      updateTotalSizeBadge();
+      updateGdriveStatusUI();
     }
 
-    async function deleteStack(stackName) {
-      if (!stackName) return;
-      const prefix = `${stackName}/`;
-      const affectedNotes = state.notes.filter(n => !n.trashed && n.notebook && n.notebook.startsWith(prefix));
-      const res = await openCustomModal({
-        title: '🗑️ スタックを解除・削除',
-        message: `スタック「${stackName}」を解除しますか？\n（配下のノートブックは削除されず、トップ階層の独立ノートブックへ昇格します。対象ノート ${affectedNotes.length} 件も保持されます）`,
-        actions: [
-          { label: 'スタックを解除する', className: 'btn btn-danger', value: 'ungroup' },
-          { label: 'キャンセル', className: 'btn btn-muted', value: 'cancel' }
-        ]
-      });
-      if (res !== 'ungroup') return;
-
-      const updatedAt = new Date().toISOString();
-      for (const n of state.notes) {
-        if (n.notebook && n.notebook.startsWith(prefix)) {
-          n.notebook = n.notebook.slice(prefix.length);
-          n.updated = updatedAt;
-          n.syncStatus = 'dirty';
-          await saveNoteMetaAndBodyToDB(n, null, true);
-          enqueueCloudUpload(n.id);
-        }
-      }
-      state.customNotebooks = state.customNotebooks
-        .filter(nb => nb !== prefix)
-        .map(nb => nb.startsWith(prefix) ? nb.slice(prefix.length) : nb);
-      await saveCustomNotebooks();
-      rebuildNotebooksFromNotes();
-
-      if (state.activeFilter === `stack:${stackName}`) {
-        setActiveFilter('all');
-      } else if (state.activeFilter.startsWith(`nb:${prefix}`)) {
-        setActiveFilter(`nb:${state.activeFilter.slice(`nb:${prefix}`.length)}`);
-      } else {
-        renderAll();
-      }
-      const activeMeta = getActiveNoteMeta();
-      if (activeMeta) {
-        el.noteNotebookSelect.value = activeMeta.notebook || '';
-        el.editCurrentNotebookInlineBtn.classList.toggle('hidden', !activeMeta.notebook);
-      }
-      showToast(`スタック「${stackName}」を解除しました`, 'info');
-    }
-
-    function bindEvents() {
+    /* ==========================================================================
+       14. イベントリスナー登録＆初期化
+       ========================================================================== */
+    function bindAllEvents() {
+      // ダーク/ライトテーマ切替
       el.themeToggleBtn.addEventListener('click', () => {
-        applyTheme(!document.documentElement.classList.contains('dark'));
+        const isDark = document.documentElement.classList.toggle('dark');
+        el.themeIconSun.classList.toggle('hidden', !isDark);
+        el.themeIconMoon.classList.toggle('hidden', isDark);
+        safeStorage.setItem('loosenote-theme', isDark ? 'dark' : 'light');
+        applyDarkModeReadabilityFix(el.noteRichEditor);
       });
+
       el.openSidebarBtn.addEventListener('click', openMobileSidebar);
       el.closeSidebarBtn.addEventListener('click', closeMobileSidebar);
       el.sidebarBackdrop.addEventListener('click', closeMobileSidebar);
-
-      el.newNoteBtn.addEventListener('click', () => { createBlankNote(''); closeMobileSidebar(); });
-      el.emptyCreateBtn.addEventListener('click', () => createBlankNote(''));
-
-      el.connectGdriveBtn.addEventListener('click', async () => {
-        if (!state.gdriveClientId) { openGdriveSettingsModal(); return; }
-        await connectGoogleDriveOnly(isGdriveConnected() ? '' : 'consent');
+      el.mobileBackBtn.addEventListener('click', () => {
+        el.editorPane.classList.remove('mobile-open');
+        document.querySelector('.workspace')?.classList.remove('mobile-editor-open');
+        if (state.mobileHistoryPushed) {
+          state.mobileHistoryPushed = false;
+          try { window.history.back(); } catch {}
+        }
       });
+
+      window.addEventListener('popstate', () => {
+        if (isMobileViewport() && el.editorPane.classList.contains('mobile-open')) {
+          state.mobileHistoryPushed = false;
+          el.editorPane.classList.remove('mobile-open');
+          document.querySelector('.workspace')?.classList.remove('mobile-editor-open');
+        }
+      });
+
+      el.newNoteBtn.addEventListener('click', () => { createBlankNote(); closeMobileSidebar(); });
+      el.emptyCreateBtn.addEventListener('click', () => createBlankNote());
+
+      // Google Drive 接続（認証のみ）・送信（UL）・受信（DL）・設定・中断
+      el.connectGdriveBtn.addEventListener('click', () => connectGoogleDriveOnly('consent'));
       el.uploadGdriveNowBtn.addEventListener('click', () => uploadChangesToGoogleDrive());
       el.downloadGdriveNowBtn.addEventListener('click', () => downloadChangesFromGoogleDrive(false));
       el.gdriveSettingsBtn.addEventListener('click', openGdriveSettingsModal);
       el.abortSyncBtn.addEventListener('click', () => {
         state.abortSyncRequested = true;
-        showToast('中断をリクエストしました...', 'warning');
+        showToast('処理を中断しています...', 'warning');
       });
 
+      // ビューフィルタ
       document.querySelectorAll('.filter-btn').forEach(btn => {
         btn.addEventListener('click', () => {
           if (btn.dataset.filter) {
@@ -4497,11 +5002,13 @@
           }
         });
       });
+
       el.togglePinnedListBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         state.pinnedCollapsed = !state.pinnedCollapsed;
         renderSidebar();
       });
+
       el.createNotebookBtn.addEventListener('click', openCreateNotebookModal);
       el.quickNewNotebookInlineBtn.addEventListener('click', openCreateNotebookModal);
       el.editCurrentNotebookInlineBtn.addEventListener('click', () => {
@@ -4509,18 +5016,20 @@
         if (meta && meta.notebook) openEditNotebookModal(meta.notebook);
       });
 
+      // ENEX / ZIP インポート
       el.importEnexBtn.addEventListener('click', () => el.enexFileInput.click());
-      el.enexFileInput.addEventListener('change', async (e) => {
-        await handleImportedFiles(e.target.files);
+      el.enexFileInput.addEventListener('change', (e) => {
+        handleImportedFiles(e.target.files);
         e.target.value = '';
       });
 
-      el.searchInput.addEventListener('input', () => {
-        el.clearSearchBtn.classList.toggle('hidden', !el.searchInput.value);
+      // 高速検索＆ソート＆表示切替
+      el.searchInput.addEventListener('input', (e) => {
         clearTimeout(state.searchDebounceTimer);
+        const val = e.target.value;
+        el.clearSearchBtn.classList.toggle('hidden', !val);
         state.searchDebounceTimer = setTimeout(() => {
-          state.searchDebounceTimer = null;
-          state.searchQuery = el.searchInput.value;
+          state.searchQuery = val;
           state.renderedListCount = LIST_PAGE_SIZE;
           renderNotesList();
         }, 120);
@@ -4541,6 +5050,7 @@
       el.sortDirBtn.addEventListener('click', () => {
         setSortOptions(state.sortField, state.sortDir === 'desc' ? 'asc' : 'desc');
       });
+
       el.toggleCompactListBtn.addEventListener('click', () => {
         state.isCompactList = !state.isCompactList;
         safeStorage.setItem('loosenote-compact', String(state.isCompactList));
@@ -4549,72 +5059,92 @@
         renderNotesList();
       });
 
+      // ゴミ箱を空にする
+      el.emptyTrashBtn.addEventListener('click', async () => {
+        const trashed = state.notes.filter(n => n.trashed);
+        if (trashed.length === 0) return;
+        const ok = await openCustomModal({
+          title: '🔥 ゴミ箱を空にする',
+          message: `ゴミ箱内の ${trashed.length} 件のノートを完全に削除します。この操作は取り消せません。`,
+          actions: [
+            { label: '完全に削除', className: 'btn btn-danger', value: 'yes' },
+            { label: 'キャンセル', className: 'btn btn-muted', value: 'no' }
+          ]
+        });
+        if (ok !== 'yes') return;
+        for (const n of trashed) {
+          if (n.gdriveFileId) await trashOrDeleteGdriveFile(n.gdriveFileId);
+          await deleteNoteFromDB(n.id);
+        }
+        state.notes = state.notes.filter(n => !n.trashed);
+        if (trashed.some(t => t.id === state.activeNoteId)) {
+          state.activeNoteId = null;
+          state.activeNoteContentId = null;
+          showEmptyEditor();
+        }
+        renderAll();
+        showToast('ゴミ箱を空にしました', 'info');
+      });
+
+      // 一括操作バー
       el.bulkSelectAllCheckbox.addEventListener('change', (e) => {
         const list = getFilteredAndSortedNotes();
         if (e.target.checked) list.forEach(n => state.selectedNoteIds.add(n.id));
         else state.selectedNoteIds.clear();
         renderNotesList();
       });
+
       el.bulkMoveBtn.addEventListener('click', async () => {
         const ids = Array.from(state.selectedNoteIds);
         if (ids.length === 0) return;
-        const selectableNotebooks = state.notebooks.filter(nb => !nb.endsWith('/'));
+        const opts = [`<option value="">未分類 (インボックス)</option>`]
+          .concat(state.notebooks.filter(nb => !nb.endsWith('/')).map(nb => `<option value="${escapeHtml(nb)}">${escapeHtml(nb)}</option>`))
+          .join('');
         await openCustomModal({
           title: `📁 ${ids.length} 件のノートを移動`,
-          bodyHtml: `
-            <div style="display:flex;flex-direction:column;gap:8px;">
-              <label class="field-label">移動先ノートブックを選択（または新規入力）</label>
-              <input type="text" id="modal-bulk-nb-input" class="field-input" list="modal-bulk-nb-list" placeholder="空欄なら未分類へ移動">
-              <datalist id="modal-bulk-nb-list">${selectableNotebooks.map(nb => `<option value="${escapeHtml(nb)}">`).join('')}</datalist>
-            </div>
-          `,
+          bodyHtml: `<select id="bulk-nb-sel" class="field-input">${opts}</select>`,
           actions: [
             {
               label: '移動する',
               className: 'btn btn-brand',
               onClick: async (bodyEl) => {
-                const dest = bodyEl.querySelector('#modal-bulk-nb-input').value.trim().replace(/^\/+|\/+$/g, '');
+                const targetNb = bodyEl.querySelector('#bulk-nb-sel').value;
                 for (const id of ids) {
                   const n = state.notes.find(x => x.id === id);
                   if (n) {
-                    n.notebook = dest;
-                    n.updated = new Date().toISOString();
+                    n.notebook = targetNb;
                     n.syncStatus = 'dirty';
                     await saveNoteMetaAndBodyToDB(n, null, true);
                     enqueueCloudUpload(n.id);
                   }
                 }
-                if (dest && !state.customNotebooks.includes(dest)) {
-                  state.customNotebooks.push(dest);
-                  await saveCustomNotebooks();
-                }
                 state.selectedNoteIds.clear();
-                rebuildNotebooksFromNotes();
                 renderAll();
-                showToast(`${ids.length} 件のノートを移動しました`, 'success');
+                showToast(`${ids.length} 件を移動しました`, 'success');
               }
             },
             { label: 'キャンセル', className: 'btn btn-muted', value: 'cancel' }
           ]
         });
       });
+
       el.bulkTagBtn.addEventListener('click', async () => {
         const ids = Array.from(state.selectedNoteIds);
         if (ids.length === 0) return;
         await openCustomModal({
-          title: `🏷️ ${ids.length} 件のノートにタグを追加`,
-          bodyHtml: `<input type="text" id="modal-bulk-tag-input" class="field-input" placeholder="追加するタグ名">`,
+          title: `🏷️ ${ids.length} 件にタグを一括追加`,
+          bodyHtml: `<input type="text" id="bulk-tag-inp" class="field-input" placeholder="追加するタグ名">`,
           actions: [
             {
               label: '追加する',
               className: 'btn btn-brand',
               onClick: async (bodyEl) => {
-                const tag = bodyEl.querySelector('#modal-bulk-tag-input').value.trim().replace(/^#/, '');
+                const tag = bodyEl.querySelector('#bulk-tag-inp').value.trim().replace(/^#/, '');
                 if (!tag) return false;
                 for (const id of ids) {
                   const n = state.notes.find(x => x.id === id);
-                  if (n && !(n.tags || []).includes(tag)) {
-                    n.tags = [...(n.tags || []), tag];
+                  if (n && !n.tags.includes(tag)) {
+                    n.tags.push(tag);
                     n.syncStatus = 'dirty';
                     await saveNoteMetaAndBodyToDB(n, null, true);
                     enqueueCloudUpload(n.id);
@@ -4629,70 +5159,60 @@
           ]
         });
       });
+
       el.bulkTrashBtn.addEventListener('click', async () => {
         const ids = Array.from(state.selectedNoteIds);
-        if (ids.length === 0) return;
         for (const id of ids) {
           const n = state.notes.find(x => x.id === id);
           if (n) {
-            if (state.activeFilter === 'trash') {
-              await trashOrDeleteGdriveFile(n.gdriveFileId);
-              await deleteNoteFromDB(n.id);
-              state.notes = state.notes.filter(x => x.id !== id);
-            } else {
-              n.trashed = true;
-              await trashOrDeleteGdriveFile(n.gdriveFileId);
-              await saveNoteMetaAndBodyToDB(n, null, true);
-            }
+            n.trashed = true;
+            n.syncStatus = 'dirty';
+            await saveNoteMetaAndBodyToDB(n, null, true);
+            enqueueCloudUpload(n.id);
           }
         }
         state.selectedNoteIds.clear();
-        if (ids.includes(state.activeNoteId)) { state.activeNoteId = null; showEmptyEditor(); }
-        rebuildNotebooksFromNotes();
         renderAll();
-        showToast(`${ids.length} 件を処理しました`, 'info');
+        showToast(`${ids.length} 件をゴミ箱へ移動しました`, 'info');
       });
 
-      el.emptyTrashBtn.addEventListener('click', async () => {
-        const trashed = state.notes.filter(n => n.trashed);
-        if (trashed.length === 0) return;
-        const res = await openCustomModal({
-          title: '🔥 ゴミ箱を空にする',
-          message: `ゴミ箱内の ${trashed.length} 件のノートを完全に削除しますか？この操作は取り消せません。`,
-          actions: [
-            { label: '完全に削除する', className: 'btn btn-danger', value: 'confirm' },
-            { label: 'キャンセル', className: 'btn btn-muted', value: 'cancel' }
-          ]
-        });
-        if (res !== 'confirm') return;
-        for (const n of trashed) {
-          await trashOrDeleteGdriveFile(n.gdriveFileId);
-          await deleteNoteFromDB(n.id);
-        }
-        state.notes = state.notes.filter(n => !n.trashed);
-        if (trashed.some(t => t.id === state.activeNoteId)) { state.activeNoteId = null; showEmptyEditor(); }
-        renderAll();
-        showToast('ゴミ箱を空にしました', 'info');
+      // エディタ操作・保存・ツールバー
+      el.noteTitleInput.addEventListener('input', scheduleSaveActiveNote);
+      el.noteRichEditor.addEventListener('input', () => {
+        scheduleSaveActiveNote();
+        checkWikiLinkTrigger();
       });
 
-      el.mobileBackBtn.addEventListener('click', () => {
-        el.editorPane.classList.remove('mobile-open');
-        document.querySelector('.workspace')?.classList.remove('mobile-editor-open');
-        if (state.mobileHistoryPushed) {
-          state.mobileHistoryPushed = false;
-          try { window.history.back(); } catch {}
+      el.noteRichEditor.addEventListener('change', (e) => {
+        if (e.target && e.target.matches('input[type="checkbox"]')) {
+          if (e.target.checked) e.target.setAttribute('checked', 'checked');
+          else e.target.removeAttribute('checked');
+          scheduleSaveActiveNote();
         }
       });
-      window.addEventListener('popstate', () => {
-        if (isMobileViewport() && el.editorPane.classList.contains('mobile-open')) {
-          el.editorPane.classList.remove('mobile-open');
-          document.querySelector('.workspace')?.classList.remove('mobile-editor-open');
-          state.mobileHistoryPushed = false;
-        }
+
+      el.noteNotebookSelect.addEventListener('change', (e) => {
+        const meta = getActiveNoteMeta();
+        if (!meta) return;
+        meta.notebook = e.target.value;
+        el.editCurrentNotebookInlineBtn.classList.toggle('hidden', !meta.notebook);
+        renderSidebar();
+        renderNotesList();
+        scheduleSaveActiveNote();
       });
-      el.navBackNoteBtn.addEventListener('click', () => {
-        const prevId = state.noteHistory.pop();
-        if (prevId) selectNote(prevId, false, true);
+
+      el.addTagInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.isComposing) {
+          e.preventDefault();
+          const meta = getActiveNoteMeta();
+          const tag = el.addTagInput.value.trim().replace(/^#/, '');
+          if (meta && tag && !meta.tags.includes(tag)) {
+            meta.tags.push(tag);
+            el.addTagInput.value = '';
+            renderActiveNoteTags(meta);
+            scheduleSaveActiveNote();
+          }
+        }
       });
 
       el.pinNoteBtn.addEventListener('click', () => {
@@ -4701,33 +5221,15 @@
         meta.pinned = !meta.pinned;
         updatePinAndTrashUI(meta);
         scheduleSaveActiveNote();
-        renderSidebar();
-        renderNotesList();
-      });
-
-      el.downloadSingleHtmlBtn.addEventListener('click', async () => {
-        const meta = getActiveNoteMeta();
-        if (!meta) return;
-        await flushPendingSave();
-        const htmlStr = serializeNoteToStandaloneHtml(meta, state.activeNoteContent);
-        const blob = new Blob([htmlStr], { type: 'text/html;charset=utf-8' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `${sanitizeFilename(meta.title)}.html`;
-        a.click();
-        setTimeout(() => URL.revokeObjectURL(url), 1000);
       });
 
       el.deleteNoteBtn.addEventListener('click', async () => {
         const meta = getActiveNoteMeta();
         if (!meta) return;
         meta.trashed = true;
-        await trashOrDeleteGdriveFile(meta.gdriveFileId);
-        await saveNoteMetaAndBodyToDB(meta, null, true);
         updatePinAndTrashUI(meta);
-        rebuildNotebooksFromNotes();
-        renderAll();
+        state.pendingSaveNoteId = meta.id;
+        await flushPendingSave();
         showToast('ノートをゴミ箱へ移動しました', 'info');
       });
 
@@ -4735,86 +5237,61 @@
         const meta = getActiveNoteMeta();
         if (!meta) return;
         meta.trashed = false;
-        meta.syncStatus = 'dirty';
-        await saveNoteMetaAndBodyToDB(meta, null, true);
         updatePinAndTrashUI(meta);
-        rebuildNotebooksFromNotes();
-        renderAll();
-        enqueueCloudUpload(meta.id);
+        state.pendingSaveNoteId = meta.id;
+        await flushPendingSave();
         showToast('ノートを復元しました', 'success');
       });
 
       el.permanentDeleteNoteBtn.addEventListener('click', async () => {
         const meta = getActiveNoteMeta();
         if (!meta) return;
-        await trashOrDeleteGdriveFile(meta.gdriveFileId);
+        if (meta.gdriveFileId) await trashOrDeleteGdriveFile(meta.gdriveFileId);
         await deleteNoteFromDB(meta.id);
         state.notes = state.notes.filter(n => n.id !== meta.id);
         state.activeNoteId = null;
+        state.activeNoteContentId = null;
         showEmptyEditor();
         renderAll();
         showToast('ノートを完全に削除しました', 'info');
       });
 
-      el.editorToolbar.querySelectorAll('.toolbar-btn[data-cmd]').forEach(btn => {
-        btn.addEventListener('click', () => {
-          el.noteRichEditor.focus();
-          document.execCommand(btn.dataset.cmd, false, null);
-          scheduleSaveActiveNote();
-        });
-      });
-
-      el.insertCheckboxBtn.addEventListener('click', () => {
-        const div = document.createElement('div');
-        div.innerHTML = `<label style="display:inline-flex;align-items:center;gap:6px;"><input type="checkbox"> <span>ToDo項目</span></label>`;
-        insertNodeAtEditorCursor(div);
-        scheduleSaveActiveNote();
-      });
-
-      el.insertTableBtn.addEventListener('click', () => {
-        const tbl = document.createElement('table');
-        tbl.innerHTML = `<thead><tr><th>項目1</th><th>項目2</th><th>項目3</th></tr></thead><tbody><tr><td><br></td><td><br></td><td><br></td></tr><tr><td><br></td><td><br></td><td><br></td></tr></tbody>`;
-        insertNodeAtEditorCursor(tbl);
-        scheduleSaveActiveNote();
-      });
-
-      el.embedMediaBtn.addEventListener('click', () => el.embedMediaInput.click());
-      el.embedMediaInput.addEventListener('change', async (e) => {
-        for (const f of Array.from(e.target.files || [])) {
-          await embedFileIntoActiveEditor(f);
-        }
-        e.target.value = '';
-      });
-
-      el.insertLinkCardBtn.addEventListener('click', () => openDriveLinkCardModal(''));
-      el.insertNoteLinkBtn.addEventListener('click', () => showNoteLinkPickerWithFilter());
-
-      el.noteNotebookSelect.addEventListener('change', () => {
+      el.downloadSingleHtmlBtn.addEventListener('click', async () => {
+        await flushPendingSave();
         const meta = getActiveNoteMeta();
         if (!meta) return;
-        meta.notebook = el.noteNotebookSelect.value;
-        el.editCurrentNotebookInlineBtn.classList.toggle('hidden', !meta.notebook);
-        scheduleSaveActiveNote();
-        renderSidebar();
+        const htmlStr = serializeNoteToStandaloneHtml(meta, el.noteRichEditor.innerHTML);
+        const blob = new Blob([htmlStr], { type: 'text/html;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${sanitizeFilename(meta.title)}.html`;
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(url), 3000);
+      });
+
+      el.navBackNoteBtn.addEventListener('click', () => {
+        const prevId = state.noteHistory.pop();
+        if (prevId) selectNote(prevId, false);
       });
 
       el.editCreatedBtn.addEventListener('click', async () => {
         const meta = getActiveNoteMeta();
         if (!meta) return;
         const d = new Date(meta.created);
-        const pad = n => String(n).padStart(2, '0');
-        const localIso = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+        const pad = (n) => String(n).padStart(2, '0');
+        const localVal = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
         await openCustomModal({
-          title: '📅 作成日時の変更',
-          bodyHtml: `<input type="datetime-local" id="modal-created-dt" class="field-input" value="${localIso}">`,
+          title: '📅 作成日時を変更',
+          bodyHtml: `<input type="datetime-local" id="modal-created-dt" class="field-input" value="${localVal}">`,
           actions: [
             {
-              label: '変更する',
+              label: '更新',
               className: 'btn btn-brand',
               onClick: (bodyEl) => {
-                const val = bodyEl.querySelector('#modal-created-dt').value;
-                if (!val) return false;
-                meta.created = new Date(val).toISOString();
+                const v = bodyEl.querySelector('#modal-created-dt').value;
+                if (!v) return false;
+                meta.created = new Date(v).toISOString();
                 updateEditorHeaderMeta(meta);
                 scheduleSaveActiveNote();
               }
@@ -4824,33 +5301,117 @@
         });
       });
 
-      el.noteTitleInput.addEventListener('input', scheduleSaveActiveNote);
-      el.addTagInput.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' && !e.isComposing) {
-          e.preventDefault();
-          const meta = getActiveNoteMeta();
-          const raw = el.addTagInput.value.trim().replace(/^#/, '');
-          if (meta && raw && !(meta.tags || []).includes(raw)) {
-            meta.tags = [...(meta.tags || []), raw];
-            renderActiveNoteTags(meta);
-            scheduleSaveActiveNote();
-          }
-          el.addTagInput.value = '';
-        }
-      });
-
-      el.noteRichEditor.addEventListener('input', () => {
-        applyDarkModeReadabilityFix(el.noteRichEditor);
-        scheduleSaveActiveNote();
-        checkWikiLinkTrigger();
-      });
-
-      el.noteRichEditor.addEventListener('change', (e) => {
-        if (e.target && e.target.matches('input[type="checkbox"]')) {
+      // ツールバー各種コマンド
+      el.editorToolbar.querySelectorAll('[data-cmd]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          el.noteRichEditor.focus();
+          document.execCommand(btn.dataset.cmd, false, null);
           scheduleSaveActiveNote();
-        }
+        });
       });
 
+      el.insertCheckboxBtn.addEventListener('click', () => {
+        el.noteRichEditor.focus();
+        document.execCommand('insertHTML', false, `<div><input type="checkbox">&nbsp;</div>`);
+        scheduleSaveActiveNote();
+      });
+
+      el.insertTableBtn.addEventListener('click', () => {
+        const table = document.createElement('table');
+        table.innerHTML = `<thead><tr><th>項目1</th><th>項目2</th><th>項目3</th></tr></thead><tbody><tr><td><br></td><td><br></td><td><br></td></tr><tr><td><br></td><td><br></td><td><br></td></tr></tbody>`;
+        insertNodeAtEditorCursor(table);
+        scheduleSaveActiveNote();
+      });
+
+      el.embedMediaBtn.addEventListener('click', () => el.embedMediaInput.click());
+      el.embedMediaInput.addEventListener('change', async (e) => {
+        for (const file of Array.from(e.target.files || [])) {
+          await embedFileIntoActiveEditor(file);
+        }
+        e.target.value = '';
+      });
+
+      el.insertLinkCardBtn.addEventListener('click', () => openDriveLinkCardModal());
+      el.insertNoteLinkBtn.addEventListener('click', async () => {
+        await openInsertNoteLinkModal();
+      });
+
+      // モーダル内ノートリンク検索の動的バインド
+      document.addEventListener('input', (e) => {
+        if (e.target && e.target.id === 'modal-notelink-search') {
+          renderModalNoteLinkList(e.target.value);
+        }
+      });
+      const observer = new MutationObserver(() => {
+        if (document.getElementById('modal-notelink-list')) {
+          renderModalNoteLinkList(document.getElementById('modal-notelink-search')?.value || '');
+        }
+      });
+      observer.observe(el.modalBody, { childList: true });
+
+      function renderModalNoteLinkList(q) {
+        const listEl = document.getElementById('modal-notelink-list');
+        if (!listEl) return;
+        const kw = q.trim().toLowerCase();
+        const hits = state.notes.filter(n => !n.trashed && n.id !== state.activeNoteId && (n.title || '無題のノート').toLowerCase().includes(kw)).slice(0, 30);
+        listEl.innerHTML = hits.map(h => `
+          <button type="button" class="wiki-link-item" data-insert-nl="${h.id}">
+            <span class="truncate">📄 ${escapeHtml(h.title || '無題のノート')}</span>
+            <span style="font-size:10px;color:var(--text-faint);">${escapeHtml(h.notebook || '')}</span>
+          </button>
+        `).join('');
+        listEl.querySelectorAll('[data-insert-nl]').forEach(btn => {
+          btn.addEventListener('click', () => {
+            const target = state.notes.find(n => n.id === btn.dataset.insertNl);
+            closeActiveCustomModal('inserted');
+            if (target) {
+              el.noteRichEditor.focus();
+              document.execCommand('insertHTML', false, createInternalNoteLinkHtml(target));
+              scheduleSaveActiveNote();
+            }
+          });
+        });
+      }
+
+      // 画像サイズ調整ミニツールバーの位置追従＆非表示ヘルパー
+      const editorScrollEl = document.querySelector('.editor-scroll');
+
+      function hideImageFloatingToolbar() {
+        if (state.activeEditorImg) {
+          state.activeEditorImg.classList.remove('selected-editor-img');
+          state.activeEditorImg = null;
+        }
+        el.imageFloatingToolbar.classList.add('hidden');
+      }
+
+      function updateImageFloatingToolbarPosition() {
+        const img = state.activeEditorImg;
+        if (!img || !document.body.contains(img) || !el.noteRichEditor.contains(img)) {
+          hideImageFloatingToolbar();
+          return;
+        }
+        const rect = img.getBoundingClientRect();
+        const containerRect = editorScrollEl ? editorScrollEl.getBoundingClientRect() : { top: 48, bottom: window.innerHeight };
+        if (rect.bottom < containerRect.top || rect.top > containerRect.bottom || rect.width === 0) {
+          el.imageFloatingToolbar.classList.add('hidden');
+          return;
+        }
+        el.imageFloatingToolbar.style.left = `${Math.max(12, Math.min(window.innerWidth - 260, rect.left))}px`;
+        el.imageFloatingToolbar.style.top = `${Math.max(56, rect.top - 44)}px`;
+        el.imageFloatingToolbar.classList.remove('hidden');
+      }
+
+      if (editorScrollEl) {
+        editorScrollEl.addEventListener('scroll', updateImageFloatingToolbarPosition, { passive: true });
+      }
+      window.addEventListener('resize', updateImageFloatingToolbarPosition, { passive: true });
+      document.addEventListener('click', (e) => {
+        if (!state.activeEditorImg) return;
+        if (e.target.closest('#image-floating-toolbar') || e.target.closest('#note-rich-editor img')) return;
+        hideImageFloatingToolbar();
+      });
+
+      // エディタ内クリック（内部リンク・外部リンク・リンクカード編集・画像ツールバー・ダウンロード）
       el.noteRichEditor.addEventListener('click', (e) => {
         const editCardBtn = e.target.closest('.loosenote-edit-link-card-btn');
         if (editCardBtn) {
@@ -4862,22 +5423,37 @@
         const internalLink = e.target.closest('a.loosenote-internal-link');
         if (internalLink) {
           e.preventDefault();
-          const targetId = internalLink.dataset.noteId || (internalLink.getAttribute('href') || '').replace(/^#note:/, '');
+          const targetId = internalLink.dataset.noteId;
           if (targetId) selectNote(targetId, true, true);
           return;
         }
-        if (e.target.tagName === 'IMG') {
-          el.noteRichEditor.querySelectorAll('img.selected-editor-img').forEach(i => i.classList.remove('selected-editor-img'));
-          e.target.classList.add('selected-editor-img');
-          state.activeEditorImg = e.target;
-          const rect = e.target.getBoundingClientRect();
-          el.imageFloatingToolbar.style.left = `${Math.max(12, Math.min(window.innerWidth - 260, rect.left))}px`;
-          el.imageFloatingToolbar.style.top = `${Math.max(56, rect.top - 42)}px`;
-          el.imageFloatingToolbar.classList.remove('hidden');
+        const anchorLink = e.target.closest('a');
+        if (anchorLink) {
+          const href = anchorLink.getAttribute('href') || '';
+          if (anchorLink.hasAttribute('download')) {
+            e.preventDefault();
+            const tempA = document.createElement('a');
+            tempA.href = href;
+            tempA.download = anchorLink.getAttribute('download') || 'attachment';
+            tempA.click();
+            return;
+          }
+          if (/^https?:\/\//i.test(href)) {
+            e.preventDefault();
+            window.open(href, '_blank', 'noopener,noreferrer');
+            return;
+          }
+        }
+        const img = e.target.closest('img');
+        if (img) {
+          if (state.activeEditorImg && state.activeEditorImg !== img) {
+            state.activeEditorImg.classList.remove('selected-editor-img');
+          }
+          state.activeEditorImg = img;
+          img.classList.add('selected-editor-img');
+          updateImageFloatingToolbarPosition();
         } else {
-          state.activeEditorImg = null;
-          el.imageFloatingToolbar.classList.add('hidden');
-          el.noteRichEditor.querySelectorAll('img.selected-editor-img').forEach(i => i.classList.remove('selected-editor-img'));
+          hideImageFloatingToolbar();
         }
       });
 
@@ -4885,7 +5461,7 @@
         btn.addEventListener('click', () => {
           if (!state.activeEditorImg) return;
           state.activeEditorImg.style.width = btn.dataset.imgSize;
-          state.activeEditorImg.style.maxWidth = '100%';
+          updateImageFloatingToolbarPosition();
           scheduleSaveActiveNote();
         });
       });
@@ -4896,138 +5472,167 @@
         el.imageLightboxModal.classList.remove('hidden');
       });
       el.imgLightboxCloseBtn.addEventListener('click', () => el.imageLightboxModal.classList.add('hidden'));
-      el.imageLightboxModal.addEventListener('click', (e) => {
-        if (e.target === el.imageLightboxModal) el.imageLightboxModal.classList.add('hidden');
-      });
 
-      // クリップボード画像貼り付け（自動WebP軽量化対応）
+      // クリップボード画像貼り付け（Ctrl+V / スマホ長押しペースト）
       el.noteRichEditor.addEventListener('paste', async (e) => {
         const items = Array.from(e.clipboardData?.items || []);
-        const imageItems = items.filter(it => it.type && it.type.startsWith('image/'));
-        if (imageItems.length > 0) {
+        const imageItem = items.find(it => it.type.startsWith('image/'));
+        if (imageItem) {
           e.preventDefault();
-          for (const it of imageItems) {
-            const blob = it.getAsFile();
-            if (blob) await embedFileIntoActiveEditor(blob);
-          }
+          const file = imageItem.getAsFile();
+          if (file) await embedFileIntoActiveEditor(file);
         }
       });
 
-      // ドラッグ＆ドロップ（エディタ上なら差し込み、それ以外なら新規ノート化）
-      let dragDepth = 0;
-      window.addEventListener('dragenter', (e) => {
-        if (!e.dataTransfer || !Array.from(e.dataTransfer.types || []).includes('Files')) return;
-        dragDepth++;
-        if (el.editorPane.contains(e.target) && state.activeNoteId) {
-          el.editorPane.classList.add('editor-drop-active');
-          el.editorDropBanner.classList.remove('hidden');
-        } else {
-          el.globalDropOverlay.classList.remove('hidden');
-        }
+      // エディタ領域への直接ドラッグ＆ドロップ（開いているノートへ画像・ファイルを差し込み）
+      let editorDragDepth = 0;
+      el.editorPane.addEventListener('dragenter', (e) => {
+        if (!state.activeNoteId || !e.dataTransfer?.types?.includes('Files')) return;
+        e.preventDefault();
+        editorDragDepth++;
+        el.editorPane.classList.add('editor-drop-active');
+        el.editorDropBanner.classList.remove('hidden');
       });
-      window.addEventListener('dragover', (e) => {
-        if (e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files')) {
-          e.preventDefault();
-        }
+      el.editorPane.addEventListener('dragover', (e) => {
+        if (!state.activeNoteId || !e.dataTransfer?.types?.includes('Files')) return;
+        e.preventDefault();
+        e.stopPropagation();
+        el.editorPane.classList.add('editor-drop-active');
+        el.editorDropBanner.classList.remove('hidden');
       });
-      window.addEventListener('dragleave', () => {
-        dragDepth = Math.max(0, dragDepth - 1);
-        if (dragDepth === 0) {
-          el.globalDropOverlay.classList.add('hidden');
+      el.editorPane.addEventListener('dragleave', (e) => {
+        if (!state.activeNoteId) return;
+        e.preventDefault();
+        editorDragDepth = Math.max(0, editorDragDepth - 1);
+        if (editorDragDepth === 0) {
           el.editorPane.classList.remove('editor-drop-active');
           el.editorDropBanner.classList.add('hidden');
         }
       });
-      window.addEventListener('drop', async (e) => {
+      el.editorPane.addEventListener('drop', async (e) => {
+        if (!state.activeNoteId || !e.dataTransfer?.files?.length) return;
         e.preventDefault();
-        dragDepth = 0;
-        const droppedOnEditor = el.editorPane.contains(e.target) && Boolean(state.activeNoteId);
-        el.globalDropOverlay.classList.add('hidden');
+        e.stopPropagation();
+        editorDragDepth = 0;
+        dragCounter = 0;
         el.editorPane.classList.remove('editor-drop-active');
         el.editorDropBanner.classList.add('hidden');
+        el.globalDropOverlay.classList.add('hidden');
 
-        const files = Array.from(e.dataTransfer?.files || []);
-        if (files.length === 0) return;
-
-        if (droppedOnEditor && files.every(f => !/\.(enex|xml|zip|html|htm)$/i.test(f.name))) {
-          for (const f of files) await embedFileIntoActiveEditor(f);
-        } else {
-          await handleImportedFiles(files);
+        const files = Array.from(e.dataTransfer.files);
+        for (const file of files) {
+          const lower = file.name.toLowerCase();
+          if (lower.endsWith('.enex') || lower.endsWith('.xml') || lower.endsWith('.zip')) {
+            await handleImportedFiles([file]);
+          } else {
+            await embedFileIntoActiveEditor(file);
+          }
         }
       });
 
-      // キーボードショートカット (Ctrl+K / Cmd+K, Escape)
+      // 画面全体ドラッグ＆ドロップ（新規ノート作成 / 一括インポート）
+      let dragCounter = 0;
+      window.addEventListener('dragenter', (e) => {
+        if (!e.dataTransfer?.types?.includes('Files')) return;
+        e.preventDefault();
+        dragCounter++;
+        if (!state.activeNoteId) {
+          el.globalDropOverlay.classList.remove('hidden');
+        }
+      });
+      window.addEventListener('dragover', (e) => {
+        if (e.dataTransfer?.types?.includes('Files')) e.preventDefault();
+      });
+      window.addEventListener('dragleave', (e) => {
+        if (!e.dataTransfer?.types?.includes('Files')) return;
+        e.preventDefault();
+        dragCounter = Math.max(0, dragCounter - 1);
+        if (dragCounter === 0) el.globalDropOverlay.classList.add('hidden');
+      });
+      window.addEventListener('drop', async (e) => {
+        if (!e.dataTransfer?.files?.length) return;
+        e.preventDefault();
+        dragCounter = 0;
+        el.globalDropOverlay.classList.add('hidden');
+        await handleImportedFiles(e.dataTransfer.files);
+      });
+
+      // キーボードショートカット（Ctrl+K クイックジャンプ / ESC）
       window.addEventListener('keydown', (e) => {
         if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
           e.preventDefault();
           openQuickJumpModal();
         } else if (e.key === 'Escape') {
-          el.imageLightboxModal.classList.add('hidden');
-          el.noteLinkPopup.classList.add('hidden');
-          if (!el.customModal.classList.contains('hidden')) {
+          if (!el.imageLightboxModal.classList.contains('hidden')) {
+            el.imageLightboxModal.classList.add('hidden');
+          } else if (!el.customModal.classList.contains('hidden')) {
             closeActiveCustomModal(null);
+          } else {
+            el.noteLinkPopup.classList.add('hidden');
           }
         }
       });
 
-      window.addEventListener('beforeunload', () => {
-        if (state.pendingSaveNoteId) flushPendingSave();
+      // バックグラウンド化・ページ離脱前の未保存データ保護
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'hidden' && state.pendingSaveNoteId) {
+          flushPendingSave();
+        }
+      });
+
+      window.addEventListener('beforeunload', (e) => {
+        if (state.pendingSaveNoteId) {
+          flushPendingSave();
+          e.preventDefault();
+          e.returnValue = '';
+        }
       });
     }
 
     async function initApp() {
       const savedTheme = safeStorage.getItem('loosenote-theme');
-      const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
-      applyTheme(savedTheme ? savedTheme === 'dark' : prefersDark);
+      const isDark = savedTheme ? savedTheme === 'dark' : true;
+      document.documentElement.classList.toggle('dark', isDark);
+      el.themeIconSun.classList.toggle('hidden', !isDark);
+      el.themeIconMoon.classList.toggle('hidden', isDark);
 
+      updateSortControlsUI();
       el.iconViewCompact.classList.toggle('hidden', state.isCompactList);
       el.iconViewCard.classList.toggle('hidden', !state.isCompactList);
 
-      bindEvents();
+      bindAllEvents();
 
       try {
-        state.notes = await loadAllNoteMetasFromDB();
-        const savedCustomNotebooks = await getAppMeta('custom_notebooks');
-        state.customNotebooks = Array.isArray(savedCustomNotebooks) ? savedCustomNotebooks : [];
+        const savedCustomNbs = await getAppMeta('custom_notebooks');
+        state.customNotebooks = Array.isArray(savedCustomNbs) ? savedCustomNbs : [];
+        const metas = await loadAllNoteMetasFromDB();
+        state.notes = metas;
+        if (state.notes.length === 0) {
+          const welcomeNote = {
+            id: `note_welcome_${Date.now()}`,
+            title: 'LooseNote 更新履歴・不具合修正情報 (v2.7)',
+            notebook: '',
+            tags: ['更新履歴'],
+            pinned: true,
+            trashed: false,
+            created: new Date().toISOString(),
+            updated: new Date().toISOString(),
+            content: `<h2>📋 LooseNote 更新履歴・主な修正内容 (v2.7)</h2><p>これまでのアップデートで実施した機能改善および不具合修正の一覧です。</p><h3>1. Evernote (.enex) / ZIP インポートの抽出強化</h3><ul><li><strong>同一添付ファイルの複数配置に対応：</strong>1つのノート内に同じ画像やファイルが複数回配置されている場合、2つ目以降が空になってしまう不具合を修正しました。</li><li><strong>MIMEタイプ・Base64の自動補完：</strong>拡張子や <code>&lt;en-media&gt;</code> 属性からのMIMEタイプ自動補完、Base64パディング補正、ハッシュ照合（MD5 / objID）、生XML形式の本文抽出に対応しました。</li><li><strong>ZIP文字コードの自動判定：</strong>UTF-8に加え、Windows等で作成された Shift_JIS（CP932）のフォルダ名・ファイル名も文字化けせず読み込めるよう改善しました。</li></ul><h3>2. Googleドライブ同期・フォルダ整理の改善</h3><ul><li><strong>空HTML上書き保護と大容量送信の安定化：</strong>本文未取得時や添付データ欠落時の誤上書きをブロックし、大容量HTMLのマルチパート送信を Blob 処理へ変更しました。</li><li><strong>スタック・ノートブック移動・リネームの自動反映：</strong>リネーム・スタック変更・削除時にGoogleドライブ側のファイル移動と空になった旧フォルダの整理を実行します（未接続時の操作も次回送信時に自動反映）。</li><li><strong>ゴミ箱・完全削除・差分同期の整合性向上：</strong>ゴミ箱への移動や完全削除、Changes API でのフォルダ名変更がGoogleドライブと端末間で正しく同期されるよう修正しました。</li></ul><h3>3. エディタUI・データ保護の品質改善</h3><ul><li><strong>検索・モーダル操作の修正：</strong>クイックジャンプ（<code>Ctrl+K</code> / <code>⌘K</code>）の候補一覧表示順や、各種モーダルの入力バリデーション判定を修正しました。</li><li><strong>編集・保存時の安全性向上：</strong>画像サイズ調整ミニツールバーのスクロール追従・自動非表示、Googleドライブリンクカードの属性保護、保存失敗時のエラー通知およびページ離脱前の未保存データ保護を強化しました。</li></ul>`,
+            syncStatus: 'local_only'
+          };
+          const { meta, body } = splitNoteToMetaAndBody(welcomeNote);
+          await saveNoteMetaAndBodyToDB(meta, body, true);
+          state.notes.push(meta);
+        }
       } catch (err) {
-        console.error('DB読込エラー:', err);
-        state.notes = [];
-        state.customNotebooks = [];
+        console.error('DB初期化エラー:', err);
+        showToast('ローカルデータベースの初期化に失敗しました', 'error');
       }
 
-      if (state.notes.length === 0) {
-        const now = new Date().toISOString();
-        const welcomeNote = {
-          id: `note_welcome_${Date.now()}`,
-          title: 'LooseNote へようこそ！',
-          notebook: '',
-          tags: ['ガイド'],
-          pinned: true,
-          trashed: false,
-          created: now,
-          updated: now,
-          content: `
-            <p><strong>LooseNote</strong> は、Androidスマホ・iPhone・PCから<strong>Googleドライブの自分のフォルダ</strong>へ直接保存・同期できる超軽量HTMLノートアプリです。</p>
-            <ul>
-              <li><strong>スマホ・PC直接同期：</strong>左上の「Googleドライブに接続」からログインするだけで、全端末から直接HTMLノートを読み書きできます。</li>
-              <li><strong>大容量でも爆速：</strong>メタデータ分離＋スマートLRUキャッシュにより、数千件のノートがあっても瞬時に起動・検索できます。</li>
-              <li><strong>10MB超ガード：</strong>10MBを超える動画やPDFはHTMLへ直接埋め込まず、Googleドライブ別フォルダ保管＆リンクカードで軽量管理します。</li>
-              <li><strong>ノート間リンク：</strong>本文で <code>[[</code> と入力すると他のノートへのリンクを瞬時に挿入できます。</li>
-            </ul>
-          `,
-          syncStatus: 'local_only'
-        };
-        const { meta, body } = splitNoteToMetaAndBody(welcomeNote);
-        await saveNoteMetaAndBodyToDB(meta, body, true);
-        state.notes.push(meta);
-      }
-
-      rebuildNotebooksFromNotes();
       renderAll();
-
-      const firstActive = getFilteredAndSortedNotes()[0] || state.notes.find(n => !n.trashed);
-      if (firstActive) {
-        await selectNote(firstActive.id, false);
+      const firstNote = getFilteredAndSortedNotes()[0];
+      if (firstNote && !isMobileViewport()) {
+        await selectNote(firstNote.id, false);
       } else {
         showEmptyEditor();
       }
@@ -5035,5 +5640,6 @@
 
     initApp();
   </script>
+
 
 </body></html>
