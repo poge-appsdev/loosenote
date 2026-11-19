@@ -3597,7 +3597,7 @@ async function uploadChangesToGoogleDrive() {
       el.imageFloatingToolbar.style.top = `${Math.max(56, rect.top - 42)}px`;
       el.imageFloatingToolbar.classList.remove('hidden');
     }
-
+    
     async function selectNote(noteId, pushHistory = true, notifyIfMissing = false) {
       if (!noteId) return;
       if (state.pendingSaveNoteId && state.pendingSaveNoteId !== noteId) {
@@ -3685,6 +3685,9 @@ async function uploadChangesToGoogleDrive() {
       state.activeNoteContentId = noteId;
       state.activeNoteContent = content;
       el.noteRichEditor.innerHTML = content;
+      el.noteRichEditor.querySelectorAll('a.loosenote-internal-link').forEach(link => {
+        link.removeAttribute('contenteditable');
+      });
       applyDarkModeReadabilityFix(el.noteRichEditor);
       updateEditorHeaderMeta(meta);
       updateLruStatusBadge();
@@ -4292,20 +4295,40 @@ async function uploadChangesToGoogleDrive() {
     /* ==========================================================================
        12. ノート間リンク（[[ クイック挿入・クリック遷移）＆ Ctrl+K クイックジャンプ
        ========================================================================== */
-    function insertInternalNoteLinkChip(targetMeta) {
+    function insertInternalNoteLinkChip(targetMeta, targetRange = undefined) {
       const a = document.createElement('a');
       a.href = `#note:${targetMeta.id}`;
       a.dataset.noteId = targetMeta.id;
       a.className = 'loosenote-internal-link';
-      a.contentEditable = 'false';
       a.textContent = `📝 ${targetMeta.title || '無題のノート'}`;
+
+      if (targetRange !== undefined) {
+        el.noteRichEditor.focus();
+        const sel = window.getSelection();
+        if (sel) {
+          sel.removeAllRanges();
+          if (targetRange && el.noteRichEditor.contains(targetRange.commonAncestorContainer)) {
+            sel.addRange(targetRange);
+          }
+        }
+      }
+
       insertNodeAtEditorCursor(a);
       const space = document.createTextNode(' ');
       a.after(space);
+      const sel = window.getSelection();
+      if (sel) {
+        const afterRange = document.createRange();
+        afterRange.setStartAfter(space);
+        afterRange.collapse(true);
+        sel.removeAllRanges();
+        sel.addRange(afterRange);
+      }
       scheduleSaveActiveNote();
     }
-
+    
     function showNoteLinkPickerWithFilter() {
+      const savedRange = captureEditorSelectionRange();
       const candidates = state.notes.filter(n => !n.trashed && n.id !== state.activeNoteId);
       openCustomModal({
         title: '🔗 他のノートへの内部リンクを挿入',
@@ -4332,7 +4355,7 @@ async function uploadChangesToGoogleDrive() {
           btn.addEventListener('click', () => {
             const target = candidates.find(c => c.id === btn.dataset.pickId);
             closeActiveCustomModal(null);
-            if (target) insertInternalNoteLinkChip(target);
+            if (target) insertInternalNoteLinkChip(target, savedRange);
           });
         });
       };
@@ -4771,8 +4794,25 @@ async function uploadChangesToGoogleDrive() {
       await applyStackMutation(stackName, '');
       showToast(`スタック「${stackName}」を解除しました`, 'info');
     }
-
+    
     function bindEvents() {
+      const normalizeInternalLinks = () => {
+        el.noteRichEditor.querySelectorAll('a').forEach(a => {
+          const href = a.getAttribute('href') || '';
+          const noteMatch = href.match(/#note:([a-zA-Z0-9_-]+)$/);
+          const noteId = a.dataset.noteId || (noteMatch ? noteMatch[1] : '');
+          if (noteId && (a.classList.contains('loosenote-internal-link') || noteMatch)) {
+            a.classList.add('loosenote-internal-link');
+            a.setAttribute('href', `#note:${noteId}`);
+            a.dataset.noteId = noteId;
+            a.removeAttribute('contenteditable');
+            a.removeAttribute('style');
+            a.removeAttribute('target');
+            a.removeAttribute('rel');
+          }
+        });
+      };
+
       el.themeToggleBtn.addEventListener('click', () => {
         applyTheme(!document.documentElement.classList.contains('dark'));
       });
@@ -5154,6 +5194,7 @@ async function uploadChangesToGoogleDrive() {
       });
 
       el.noteRichEditor.addEventListener('input', () => {
+        normalizeInternalLinks();
         applyDarkModeReadabilityFix(el.noteRichEditor);
         scheduleSaveActiveNote();
         checkWikiLinkTrigger();
@@ -5176,6 +5217,8 @@ async function uploadChangesToGoogleDrive() {
         const internalLink = e.target.closest('a.loosenote-internal-link');
         if (internalLink) {
           e.preventDefault();
+          const sel = window.getSelection();
+          if (sel && !sel.isCollapsed) return;
           const targetId = internalLink.dataset.noteId || (internalLink.getAttribute('href') || '').replace(/^#note:/, '');
           if (targetId) selectNote(targetId, true, true);
           return;
@@ -5228,6 +5271,8 @@ async function uploadChangesToGoogleDrive() {
             const blob = it.getAsFile();
             if (blob) await embedFileIntoActiveEditor(blob);
           }
+        } else {
+          setTimeout(normalizeInternalLinks, 0);
         }
       });
 
