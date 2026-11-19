@@ -693,7 +693,18 @@
     <span style="width:1px;height:16px;background:var(--border-strong);margin:0 2px;"></span>
     <button type="button" id="img-lightbox-open-btn" class="btn badge-brand" style="padding:4px 8px;font-weight:600;">🔍 拡大</button>
   </div>
+  
+    <span style="width:1px;height:16px;background:var(--border-strong);margin:0 2px;"></span>
+    <button type="button" id="img-lightbox-open-btn" class="btn badge-brand" style="padding:4px 8px;font-weight:600;">🔍 拡大</button>
+  </div>
 
+  <!-- 外部URLリンク操作ミニツールバー -->
+  <div id="link-floating-toolbar" class="floating-bar hidden">
+    <a id="link-toolbar-open-btn" href="#" target="_blank" rel="noopener noreferrer" class="btn badge-sky">↗ 開く</a>
+    <button type="button" id="link-toolbar-edit-btn" class="btn btn-muted">✎ 編集</button>
+    <button type="button" id="link-toolbar-unlink-btn" class="btn btn-muted">✂ 解除</button>
+  </div>
+  
   <!-- [[ 入力時のノート間リンククイック候補ポップアップ -->
   <div id="note-link-popup" class="wiki-link-popup hidden"></div>
 
@@ -964,6 +975,13 @@
             <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"></path></svg>
             Googleドライブリンク
           </button>
+          <button type="button" id="insert-link-card-btn" class="btn badge-sky" style="padding:4px 10px;">
+            <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"></path></svg>
+            Googleドライブリンク
+          </button>
+          <button type="button" id="insert-external-link-btn" class="btn btn-muted" title="選択したテキストに外部URLリンクを設定">
+            🌐 URLリンク
+          </button>
           <button type="button" id="insert-note-link-btn" class="btn btn-muted" style="padding:4px 10px;" title="他のノートへのリンクを挿入（本文で [[ と入力しても選べます）">
             🔗 ノートリンク
           </button>
@@ -1061,6 +1079,11 @@
       globalDropOverlay: document.getElementById('global-drop-overlay'),
       imageFloatingToolbar: document.getElementById('image-floating-toolbar'),
       imgLightboxOpenBtn: document.getElementById('img-lightbox-open-btn'),
+      linkFloatingToolbar: document.getElementById('link-floating-toolbar'),
+      linkToolbarOpenBtn: document.getElementById('link-toolbar-open-btn'),
+      linkToolbarEditBtn: document.getElementById('link-toolbar-edit-btn'),
+      linkToolbarUnlinkBtn: document.getElementById('link-toolbar-unlink-btn'),
+      insertExternalLinkBtn: document.getElementById('insert-external-link-btn'),
       noteLinkPopup: document.getElementById('note-link-popup'),
       imageLightboxModal: document.getElementById('image-lightbox-modal'),
       imgLightboxCloseBtn: document.getElementById('img-lightbox-close-btn'),
@@ -5283,6 +5306,7 @@ async function uploadChangesToGoogleDrive() {
       window.addEventListener('beforeunload', () => {
         if (state.pendingSaveNoteId) flushPendingSave();
       });
+      bindExternalLinkEvents();
     }
 
     async function initApp() {
@@ -5341,6 +5365,219 @@ async function uploadChangesToGoogleDrive() {
       } else {
         showEmptyEditor();
       }
+    }
+    
+    /* ==========================================================================
+       14. 外部URLハイパーリンク機能
+       ========================================================================== */
+    let activeEditorExternalLink = null;
+    let savedEditorLinkRange = null;
+
+    function findExternalLinkElement(node) {
+      if (!node) return null;
+      const element = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
+      if (!element) return null;
+      const anchor = element.closest('a');
+      if (!anchor || !el.noteRichEditor.contains(anchor)) return null;
+      if (
+        anchor.classList.contains('loosenote-internal-link') ||
+        anchor.hasAttribute('download') ||
+        anchor.closest('.loosenote-link-card')
+      ) {
+        return null;
+      }
+      return anchor;
+    }
+
+    function normalizeExternalUrl(rawUrl) {
+      const trimmed = String(rawUrl || '').trim();
+      if (!trimmed) return '';
+      if (/^(javascript|data|vbscript):/i.test(trimmed)) return null;
+      if (/^(https?:\/\/|mailto:|tel:)/i.test(trimmed)) return trimmed;
+      return `https://${trimmed}`;
+    }
+
+    function hideLinkFloatingToolbar() {
+      activeEditorExternalLink = null;
+      el.linkFloatingToolbar.classList.add('hidden');
+    }
+
+    function positionLinkFloatingToolbar() {
+      if (!activeEditorExternalLink || !document.body.contains(activeEditorExternalLink)) {
+        hideLinkFloatingToolbar();
+        return;
+      }
+      const rect = activeEditorExternalLink.getBoundingClientRect();
+      const editorBox = el.noteRichEditor.parentElement?.getBoundingClientRect();
+      if (editorBox && (rect.bottom < editorBox.top || rect.top > editorBox.bottom)) {
+        el.linkFloatingToolbar.classList.add('hidden');
+        return;
+      }
+      el.linkFloatingToolbar.style.left = `${Math.max(12, Math.min(window.innerWidth - 240, rect.left))}px`;
+      el.linkFloatingToolbar.style.top = `${Math.max(56, rect.top - 42)}px`;
+      el.linkFloatingToolbar.classList.remove('hidden');
+    }
+
+    function showLinkFloatingToolbar(anchorEl) {
+      if (!anchorEl) return;
+      activeEditorExternalLink = anchorEl;
+      const safeHref = normalizeExternalUrl(anchorEl.getAttribute('href') || '') || '#';
+      el.linkToolbarOpenBtn.href = safeHref;
+      positionLinkFloatingToolbar();
+    }
+
+    function captureEditorSelectionRange() {
+      const sel = window.getSelection();
+      if (!sel || sel.rangeCount === 0) return null;
+      const range = sel.getRangeAt(0);
+      if (!el.noteRichEditor.contains(range.commonAncestorContainer)) return null;
+      return range.cloneRange();
+    }
+
+    async function openExternalLinkModal(targetAnchor = null) {
+      const currentRange = captureEditorSelectionRange();
+      if (!targetAnchor && currentRange) {
+        targetAnchor = findExternalLinkElement(currentRange.commonAncestorContainer);
+      }
+
+      savedEditorLinkRange = targetAnchor ? null : currentRange;
+      const initialText = targetAnchor
+        ? targetAnchor.textContent
+        : (savedEditorLinkRange ? savedEditorLinkRange.toString() : '');
+      const initialUrl = targetAnchor ? (targetAnchor.getAttribute('href') || '') : '';
+
+      await openCustomModal({
+        title: targetAnchor ? '🌐 外部URLリンクを編集' : '🌐 外部URLリンクを設定',
+        message: '選択したテキスト（または指定した表示文字）に外部Webページへのリンクを設定します。',
+        bodyHtml: `
+          <div class="modal-stack">
+            <div>
+              <label class="field-label">表示テキスト</label>
+              <input type="text" id="modal-ext-link-text" class="field-input" value="${escapeHtml(initialText)}" placeholder="リンクとして表示する文字列（空欄ならURLを表示）">
+            </div>
+            <div>
+              <label class="field-label">リンク先URL</label>
+              <input type="url" id="modal-ext-link-url" class="field-input" value="${escapeHtml(initialUrl)}" placeholder="https://example.com">
+            </div>
+          </div>
+        `,
+        actions: [
+          {
+            label: targetAnchor ? '更新する' : 'リンクを適用',
+            className: 'btn btn-sky',
+            onClick: (bodyEl) => {
+              const rawText = bodyEl.querySelector('#modal-ext-link-text').value.trim();
+              const rawUrl = bodyEl.querySelector('#modal-ext-link-url').value;
+              const normalizedUrl = normalizeExternalUrl(rawUrl);
+
+              if (!normalizedUrl) {
+                showToast(normalizedUrl === null ? '使用できないURL形式です' : 'リンク先URLを入力してください', 'warning');
+                return false;
+              }
+
+              const displayText = rawText || normalizedUrl;
+
+              if (targetAnchor && document.body.contains(targetAnchor)) {
+                targetAnchor.setAttribute('href', normalizedUrl);
+                targetAnchor.setAttribute('target', '_blank');
+                targetAnchor.setAttribute('rel', 'noopener noreferrer');
+                targetAnchor.textContent = displayText;
+                showLinkFloatingToolbar(targetAnchor);
+              } else {
+                const anchor = document.createElement('a');
+                anchor.href = normalizedUrl;
+                anchor.target = '_blank';
+                anchor.rel = 'noopener noreferrer';
+                anchor.textContent = displayText;
+
+                if (savedEditorLinkRange && el.noteRichEditor.contains(savedEditorLinkRange.commonAncestorContainer)) {
+                  const sel = window.getSelection();
+                  savedEditorLinkRange.deleteContents();
+                  savedEditorLinkRange.insertNode(anchor);
+                  const afterRange = document.createRange();
+                  afterRange.setStartAfter(anchor);
+                  afterRange.collapse(true);
+                  sel.removeAllRanges();
+                  sel.addRange(afterRange);
+                } else {
+                  insertNodeAtEditorCursor(anchor);
+                }
+                savedEditorLinkRange = null;
+              }
+
+              scheduleSaveActiveNote();
+            }
+          },
+          { label: 'キャンセル', className: 'btn btn-muted', value: 'cancel' }
+        ]
+      });
+    }
+
+    function unlinkExternalLink(anchorEl) {
+      if (!anchorEl || !anchorEl.parentNode) return;
+      const parent = anchorEl.parentNode;
+      while (anchorEl.firstChild) {
+        parent.insertBefore(anchorEl.firstChild, anchorEl);
+      }
+      parent.removeChild(anchorEl);
+      parent.normalize();
+      hideLinkFloatingToolbar();
+      scheduleSaveActiveNote();
+    }
+
+    function bindExternalLinkEvents() {
+      el.insertExternalLinkBtn.addEventListener('click', () => {
+        openExternalLinkModal(null);
+      });
+
+      el.linkToolbarEditBtn.addEventListener('click', () => {
+        if (activeEditorExternalLink) {
+          openExternalLinkModal(activeEditorExternalLink);
+        }
+      });
+
+      el.linkToolbarUnlinkBtn.addEventListener('click', () => {
+        if (activeEditorExternalLink) {
+          unlinkExternalLink(activeEditorExternalLink);
+        }
+      });
+
+      el.noteRichEditor.addEventListener('click', (e) => {
+        const anchor = findExternalLinkElement(e.target);
+        if (anchor) {
+          if (e.ctrlKey || e.metaKey) {
+            e.preventDefault();
+            const safeHref = normalizeExternalUrl(anchor.getAttribute('href') || '');
+            if (safeHref) window.open(safeHref, '_blank', 'noopener,noreferrer');
+            return;
+          }
+          showLinkFloatingToolbar(anchor);
+        } else {
+          hideLinkFloatingToolbar();
+        }
+      });
+
+      el.noteRichEditor.addEventListener('keyup', () => {
+        const sel = window.getSelection();
+        const anchor = sel && sel.rangeCount > 0 ? findExternalLinkElement(sel.anchorNode) : null;
+        if (anchor) {
+          showLinkFloatingToolbar(anchor);
+        } else {
+          hideLinkFloatingToolbar();
+        }
+      });
+
+      document.addEventListener('click', (e) => {
+        if (!activeEditorExternalLink) return;
+        if (el.linkFloatingToolbar.contains(e.target) || el.noteRichEditor.contains(e.target)) return;
+        hideLinkFloatingToolbar();
+      });
+
+      el.noteRichEditor.parentElement?.addEventListener('scroll', positionLinkFloatingToolbar, { passive: true });
+      window.addEventListener('resize', positionLinkFloatingToolbar, { passive: true });
+      window.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') hideLinkFloatingToolbar();
+      });
     }
 
     initApp();
