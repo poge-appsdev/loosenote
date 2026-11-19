@@ -2480,7 +2480,7 @@
       }
     }
 
-    async function uploadChangesToGoogleDrive() {
+async function uploadChangesToGoogleDrive() {
       if (!state.gdriveClientId) { openGdriveSettingsModal(); return; }
       if (state.isGdriveSyncing) { showToast('現在Googleドライブと通信中です', 'info'); return; }
 
@@ -2508,7 +2508,6 @@
 
         setSyncProgress(true, `端末の変更を送信中 (0/${dirtyNotes.length})`, 25);
         let uploadedCount = 0;
-        let skippedMissingBodyCount = 0;
         await runConcurrentQueue(dirtyNotes, SYNC_CONCURRENCY_LIMIT, async (noteMeta) => {
           if (noteMeta.trashed) {
             if (noteMeta.gdriveFileId) {
@@ -2519,13 +2518,36 @@
             uploadedCount++;
             return;
           }
-          const body = (noteMeta.id === state.activeNoteContentId)
+          let body = (noteMeta.id === state.activeNoteContentId)
             ? state.activeNoteContent
             : await loadNoteBodyFromDB(noteMeta.id);
+
           if (body === null || body === undefined) {
-            skippedMissingBodyCount++;
-            return;
+            if (noteMeta.gdriveFileId) {
+              try {
+                const rawHtml = await downloadNoteHtmlFromGdrive(noteMeta.gdriveFileId);
+                const parsed = parseStandaloneHtmlToNote(rawHtml, noteMeta.title, {
+                  gdriveFileId: noteMeta.gdriveFileId,
+                  gdriveMd5: noteMeta.gdriveMd5,
+                  gdriveModifiedTime: noteMeta.gdriveModifiedTime,
+                  syncStatus: noteMeta.syncStatus
+                });
+                body = parsed.content || '<p></p>';
+                noteMeta.bodyCached = true;
+                await saveNoteMetaAndBodyToDB(noteMeta, { id: noteMeta.id, content: body, cachedAt: Date.now() }, true);
+              } catch (dlErr) {
+                if (String(dlErr.message || '').includes('(404)')) {
+                  noteMeta.gdriveFileId = null;
+                  body = '<p></p>';
+                } else {
+                  throw dlErr;
+                }
+              }
+            } else {
+              body = '<p></p>';
+            }
           }
+
           await uploadNoteHtmlToGdrive(noteMeta, body);
           uploadedCount++;
         }, (done, total) => {
@@ -2533,6 +2555,7 @@
         });
 
         await flushPendingGdriveFolderCleanups();
+        await enforceLruBodyCacheLimit();
 
         if (state.activeNoteId) {
           const activeMeta = getActiveNoteMeta();
@@ -2543,11 +2566,7 @@
 
         rebuildNotebooksFromNotes();
         renderAll();
-        if (skippedMissingBodyCount > 0) {
-          showToast(`Googleドライブへ送信完了（送信 ${uploadedCount}件 / 本文未取得保護スキップ ${skippedMissingBodyCount}件）`, 'warning');
-        } else {
-          showToast(`Googleドライブへ送信完了（送信 ${uploadedCount}件）`, 'success');
-        }
+        showToast(`Googleドライブへ送信完了（送信 ${uploadedCount}件）`, 'success');
       } catch (err) {
         console.error(err);
         state.lastSyncError = err.message || '送信エラー';
