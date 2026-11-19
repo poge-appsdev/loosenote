@@ -487,16 +487,14 @@
       gap: 8px;
       flex-shrink: 0;
     }
-    .editor-toolbar {
+　　.editor-toolbar {
       padding: 6px 16px;
       background: var(--bg-surface);
       border-bottom: 1px solid var(--border);
       display: flex;
+      flex-wrap: wrap;
       align-items: center;
       gap: 6px;
-      overflow-x: auto;
-      -webkit-overflow-scrolling: touch;
-      scrollbar-width: none;
       flex-shrink: 0;
     }
     .editor-toolbar::-webkit-scrollbar { display: none; }
@@ -685,7 +683,7 @@
   </div>
 
   <!-- 画像サイズ調整ミニツールバー -->
-  <div id="image-floating-toolbar" class="floating-bar hidden">
+　<div id="image-floating-toolbar" class="floating-bar hidden">
     <span style="padding:0 6px;font-size:11px;color:var(--text-muted);">画像サイズ:</span>
     <button type="button" data-img-size="240px" class="btn btn-muted" style="padding:4px 8px;">小</button>
     <button type="button" data-img-size="480px" class="btn btn-muted" style="padding:4px 8px;">中</button>
@@ -975,11 +973,7 @@
             <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"></path></svg>
             Googleドライブリンク
           </button>
-          <button type="button" id="insert-link-card-btn" class="btn badge-sky" style="padding:4px 10px;">
-            <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"></path></svg>
-            Googleドライブリンク
-          </button>
-          <button type="button" id="insert-external-link-btn" class="btn btn-muted" title="選択したテキストに外部URLリンクを設定">
+          <button type="button" id="insert-external-link-btn" class="btn btn-muted" style="padding:4px 10px;" title="選択したテキストに外部URLリンクを設定">
             🌐 URLリンク
           </button>
           <button type="button" id="insert-note-link-btn" class="btn btn-muted" style="padding:4px 10px;" title="他のノートへのリンクを挿入（本文で [[ と入力しても選べます）">
