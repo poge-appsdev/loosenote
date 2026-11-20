@@ -1451,7 +1451,7 @@
       notebooks: [],
       customNotebooks: [],
       pinnedCollapsed: true,
-      collapsedStacks: new Set(),
+      expandedStacks: new Set(),
       selectedNoteIds: new Set(),
       activeNoteId: null,
       activeNoteContentId: null,
@@ -4258,7 +4258,7 @@ async function uploadChangesToGoogleDrive() {
       `;
 
       stacks.forEach((children, stackName) => {
-        const isCollapsed = state.collapsedStacks.has(stackName);
+        const isCollapsed = !state.expandedStacks.has(stackName);
         const totalInStack = children.reduce((sum, c) => sum + (countByNb.get(c) || 0), 0);
         treeHtml += `
           <div class="tree-row${state.activeFilter === `stack:${stackName}` ? ' active' : ''}" style="cursor:pointer;gap:4px;">
@@ -4298,8 +4298,8 @@ async function uploadChangesToGoogleDrive() {
         sp.addEventListener('click', (e) => {
           e.stopPropagation();
           const st = sp.dataset.toggleStack;
-          if (state.collapsedStacks.has(st)) state.collapsedStacks.delete(st);
-          else state.collapsedStacks.add(st);
+          if (state.expandedStacks.has(st)) state.expandedStacks.delete(st);
+          else state.expandedStacks.add(st);
           renderSidebar();
         });
       });
