@@ -194,6 +194,81 @@
       transition: transform 0.2s ease-out;
     }
     .sidebar.open { transform: translateX(0); }
+    
+    /* ▼ ここから追加：左サイドバー折りたたみレール＆展開スイッチ ▼ */
+    .sidebar-rail {
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      width: 56px;
+      height: 100%;
+      padding: 12px 0;
+      gap: 6px;
+      flex-shrink: 0;
+    }
+    .rail-logo {
+      width: 34px;
+      height: 34px;
+      border-radius: 10px;
+      overflow: hidden;
+      flex-shrink: 0;
+      margin-bottom: 2px;
+      pointer-events: none;
+    }
+    .rail-logo img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .rail-btn {
+      position: relative;
+      width: 38px;
+      height: 38px;
+      border-radius: 10px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-muted);
+      flex-shrink: 0;
+    }
+    .rail-btn:hover { background: var(--bg-hover); color: var(--text-main); }
+    .rail-btn.active { background: var(--brand-50); color: var(--brand-700); }
+    .rail-btn.connected { color: var(--sky-600); }
+    .rail-btn.disconnected-dim { opacity: 0.48; }
+    .rail-sep {
+      width: 28px;
+      height: 1px;
+      background: var(--border-strong);
+      margin: 4px 0;
+      flex-shrink: 0;
+    }
+    .rail-spacer { flex: 1; min-height: 8px; }
+    .rail-badge {
+      position: absolute;
+      top: 2px;
+      right: 2px;
+      min-width: 16px;
+      height: 16px;
+      padding: 0 4px;
+      border-radius: 9999px;
+      background: #ea580c;
+      color: #ffffff;
+      font-size: 10px;
+      font-weight: 700;
+      line-height: 16px;
+      text-align: center;
+    }
+    @media (min-width: 768px) {
+      .sidebar {
+        position: static;
+        transform: translateX(0);
+        transition: width 0.18s ease-out;
+      }
+      .sidebar.collapsed { width: 56px; }
+      .sidebar.collapsed > :not(.sidebar-rail) { display: none !important; }
+      .sidebar.collapsed > .sidebar-rail { display: flex; }
+      .sidebar:not(.collapsed) .sidebar-expand-only-btn { display: inline-flex; }
+    }
+    @media (max-width: 767px) {
+      .sidebar-collapse-desktop-btn { display: none !important; }
+    }
+    /* ▲ ここまで追加 ▲ */
 
     .sidebar-header {
       padding: 14px 16px;
@@ -702,6 +777,9 @@
   <!-- [[ 入力時のノート間リンククイック候補ポップアップ -->
   <div id="note-link-popup" class="wiki-link-popup hidden"></div>
 
+  <!-- 折りたたみ時のノートブック・スタック一覧ポップオーバー -->
+  <div id="rail-notebooks-popover" class="wiki-link-popup hidden" style="left:64px;top:148px;width:260px;max-height:72vh;"></div>
+
   <!-- 画像拡大ライトボックス -->
   <div id="image-lightbox-modal" class="overlay-backdrop hidden" style="background:rgba(0,0,0,0.88);">
     <button type="button" id="img-lightbox-close-btn" class="btn" style="position:fixed;top:16px;right:16px;background:rgba(255,255,255,0.18);color:#fff;font-weight:700;">✕ 閉じる (ESC)</button>
@@ -727,6 +805,49 @@
 
     <!-- 第1ペイン：左サイドバー -->
     <aside id="left-sidebar" class="sidebar">
+      <!-- ▼ ここから追加：折りたたみ時のアイコンレール ▼ -->
+      <div id="sidebar-rail" class="sidebar-rail">
+        <div class="rail-logo" title="LooseNote">
+          <img src="data:image/webp;base64,UklGRiYEAABXRUJQVlA4IBoEAAAwGQCdASqAAIAAPpFAmkqlo6IhpxJMALASCWMA0iy9SVn47eXnldNm3m7ybtVcti5pspRzq5oVo98MCWp40HzhiUpu5sT6fcMA3wzkHQMzLGLcrRF2fhoMRbGTXL2kzOU00Bm9gBxaXob725mfVY+hPhkRO+qIFrxu31hrttT6H8Pn/U6dEwfg0of8g44r4lzj/lzOnhUYUd9eDkY4TQTl7Y+Wh0Lizq23E7aqN7+n5OW4AWbL6qNgAaugQkJ0KQzLiR66IK4IHmTXTMYXvpC5IAAA/vtx3fRPQEd8gWWzsmuCIbHdLnUqesWSUwcecu53dYeNukcF2IpZgJTDfjTh4VooEUNqgQjNi5clgqSavB6vTkShm+gXqRMq3BEcC4Av+Qvvvw0qyH/96QS+AAywQe1bweSCKN8Kld7UBTtqLoECoFI8Q0W0jJPxJFe2eXDSgp/2I3qD/afO1cZBVNVJi4vG2oNHB5gVwFuEiNUy6aiBvUZjCBp5Ov8OB6D/kcMG2wo+8+3wwfLRLBIahJFDeReZUQHfs/TwmdO3GcqQDynF953itM+Bv+zamPf3FEecjjq+5XoRNgFo3nvdzGEITV5Yf2A2PvdwIFGG18RRh207Rj9IEQ8K9Aa63hYkfkNiMB2pnnvqwRXp4JEr1vZ1HcCwlBL1ykFVjJg6OP3Nff3ls8qiXRzYcNVTq3NeYYJR06gqqQlMN46JVpt0aE1JLjsfuZEDCTd0nzcd+iThshywCMiIL878khCy07favLEZ33W0UY9z+xeLmy2BcrheH7DFFG+OfM+5br09S/Hw7DRkOJv21+zJUFCdMf65yx6RDMe7p0EysfLZTWL5AWCDwdukkIGIOKM+oPOx/V6WD+UQyQ6V1Kj5lDvglT7nEO7TbWZuOYHfX/MkS/pbiv6Mzp6aunKibSttKyzBOC4/XeVXMVSSpx2u3Gwx5RcM7R3ZXr+cRc89WYPns+1HaxsEv3S6gXngUUt9JPywoCNfwRTtXT6MlDOG5MAfTb7QCgphSdM0Gydu9uiymOlhDFf8bygaOjYCmGyOYuVDGMtwgoCBsveS9NU80oDDBY4YOuQuLj1zWHyf3cULJUoqn+mTxnYAjWXWU100N+HpLMJHnIHiWW2auAJVt00c4RKiMEH6qv1HOqByx7fzLyZtzjF3ngb5PwMZxtQROe3KQ5xXN5IcqQ7SkxNiY+jdDuqB0Zf2XREHIl1IAdld5EnHvfcbF0VogxaL4bK4DWTjSoD5dMIkNGJ9DfFPmwsn9Or9BYzVwDXLBcP/CAOKiP5r/DEbMILj/0VaOgHf/jcZPNN0H3oPY0wo9gL+6vrSsM/2xyalNHJAFT78LozNOBsxisCZHxwW2p1MaQ1TM5g4WYW6JS4eUvXmvoAAAAA=" alt="LooseNote">
+        </div>
+        <button type="button" id="rail-expand-btn" class="rail-btn" title="左カラムを展開">
+          <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 5l7 7-7 7M5 5l7 7-7 7"></path></svg>
+        </button>
+        <button type="button" id="rail-pinned-btn" class="rail-btn" title="ピン留めノート一覧">
+          <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z"></path></svg>
+        </button>
+        <button type="button" id="rail-notes-btn" class="rail-btn active" title="すべてのノート一覧">
+          <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+        </button>
+        <button type="button" id="rail-notebooks-btn" class="rail-btn" title="ノートブック・スタック一覧">
+          <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"></path></svg>
+        </button>
+        <div class="rail-sep"></div>
+        <button type="button" id="rail-cloud-btn" class="rail-btn" title="Googleドライブ接続">
+          <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z"></path></svg>
+        </button>
+        <button type="button" id="rail-upload-btn" class="rail-btn" title="Googleドライブへ送信（アップロード）">
+          <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path></svg>
+          <span id="rail-upload-badge" class="rail-badge hidden">0</span>
+        </button>
+        <button type="button" id="rail-download-btn" class="rail-btn" title="Googleドライブから受信（ダウンロード）">
+          <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+        </button>
+        <button type="button" id="rail-settings-btn" class="rail-btn" title="Google Drive 設定・診断">
+          <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+        </button>
+        <div class="rail-spacer"></div>
+        <div class="rail-sep"></div>
+        <button type="button" id="rail-import-btn" class="rail-btn" title="Evernote (.enex) / ZIP 読込">
+          <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M12 11v9m0-9l-3 3m3-3l3 3"></path></svg>
+        </button>
+        <button type="button" id="rail-theme-btn" class="rail-btn" title="ライト/ダークモード切替">
+          <svg id="rail-theme-icon-sun" class="hidden" width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"></path></svg>
+          <svg id="rail-theme-icon-moon" width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"></path></svg>
+        </button>
+      </div>
+      <!-- ▲ ここまで追加 ▲ -->
+      
       <div class="sidebar-header">
         <div class="brand-logo">
           <div class="brand-icon" title="LooseNote">
@@ -741,6 +862,11 @@
             <svg id="theme-icon-sun" class="" width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"></path></svg>
             <svg id="theme-icon-moon" width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" class="hidden"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"></path></svg>
           </button>
+          <!-- ▼ ここから追加：カラム収納スイッチ ▼ -->
+          <button type="button" id="collapse-sidebar-btn" title="左カラムを折りたたむ" class="btn-icon sidebar-collapse-desktop-btn">
+            <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 19l-7-7 7-7m8 14l-7-7 7-7"></path></svg>
+          </button>
+          <!-- ▲ ここまで追加 ▲ -->
           <button id="close-sidebar-btn" class="btn-icon lg-hidden" title="閉じる">
             <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
           </button>
@@ -865,6 +991,11 @@
             </button>
           </div>
           <button type="button" id="quick-jump-btn" title="クイックジャンプ (Ctrl+K / Cmd+K)" class="btn btn-surface" style="padding:7px 9px;font-size:11px;">⌘K</button>
+          <!-- ▼ ここから追加：一覧上部クイック新規ノートボタン ▼ -->
+          <button type="button" id="list-new-note-btn" title="新規ノート作成" class="btn btn-brand" style="padding:7px 9px;">
+            <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 4v16m8-8H4"></path></svg>
+          </button>
+          <!-- ▲ ここまで追加 ▲ -->
         </div>
 
         <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;">
@@ -1075,6 +1206,7 @@
       linkToolbarUnlinkBtn: document.getElementById('link-toolbar-unlink-btn'),
       insertExternalLinkBtn: document.getElementById('insert-external-link-btn'),
       noteLinkPopup: document.getElementById('note-link-popup'),
+      railNotebooksPopover: document.getElementById('rail-notebooks-popover'),
       imageLightboxModal: document.getElementById('image-lightbox-modal'),
       imgLightboxCloseBtn: document.getElementById('img-lightbox-close-btn'),
       imgLightboxPreview: document.getElementById('img-lightbox-preview'),
@@ -1168,7 +1300,23 @@
       noteTitleInput: document.getElementById('note-title-input'),
       activeNoteTags: document.getElementById('active-note-tags'),
       addTagInput: document.getElementById('add-tag-input'),
-      noteRichEditor: document.getElementById('note-rich-editor')
+      noteRichEditor: document.getElementById('note-rich-editor'),
+      sidebarRail: document.getElementById('sidebar-rail'),
+      collapseSidebarBtn: document.getElementById('collapse-sidebar-btn'),
+      railExpandBtn: document.getElementById('rail-expand-btn'),
+      railPinnedBtn: document.getElementById('rail-pinned-btn'),
+      railNotesBtn: document.getElementById('rail-notes-btn'),
+      railNotebooksBtn: document.getElementById('rail-notebooks-btn'),
+      railCloudBtn: document.getElementById('rail-cloud-btn'),
+      railUploadBtn: document.getElementById('rail-upload-btn'),
+      railUploadBadge: document.getElementById('rail-upload-badge'),
+      railDownloadBtn: document.getElementById('rail-download-btn'),
+      railSettingsBtn: document.getElementById('rail-settings-btn'),
+      railImportBtn: document.getElementById('rail-import-btn'),
+      railThemeBtn: document.getElementById('rail-theme-btn'),
+      railThemeIconSun: document.getElementById('rail-theme-icon-sun'),
+      railThemeIconMoon: document.getElementById('rail-theme-icon-moon'),
+      listNewNoteBtn: document.getElementById('list-new-note-btn')
     };
 
     function formatBytes(bytes) {
@@ -5342,6 +5490,7 @@ async function uploadChangesToGoogleDrive() {
         if (state.pendingSaveNoteId) flushPendingSave();
       });
       bindExternalLinkEvents();
+      bindSidebarCollapseEvents();
     }
 
     async function initApp() {
@@ -5615,6 +5764,245 @@ async function uploadChangesToGoogleDrive() {
       });
     }
 
+    /* ==========================================================================
+       15. 左サイドバー折りたたみレール機能（ノートブック一覧押下でポップオーバー表示）
+       ========================================================================== */
+    const LS_SIDEBAR_COLLAPSED_KEY = 'loosenote-sidebar-collapsed';
+
+    function closeRailNotebooksPopover() {
+      el.railNotebooksPopover?.classList.add('hidden');
+    }
+
+    function renderRailNotebooksPopover() {
+      if (!el.railNotebooksPopover) return;
+      const activeNotes = state.notes.filter(n => !n.trashed);
+      const trashedNotes = state.notes.filter(n => n.trashed);
+      const unclassifiedCount = activeNotes.filter(n => !n.notebook).length;
+
+      const stacks = new Map();
+      const topNotebooks = [];
+      const countByNb = new Map();
+      activeNotes.forEach(n => {
+        if (!n.notebook) return;
+        countByNb.set(n.notebook, (countByNb.get(n.notebook) || 0) + 1);
+      });
+
+      state.notebooks.forEach(nb => {
+        if (nb.endsWith('/')) {
+          const stackName = nb.slice(0, -1).trim();
+          if (stackName && !stacks.has(stackName)) stacks.set(stackName, []);
+        } else if (nb.includes('/')) {
+          const stackName = nb.split('/')[0].trim();
+          if (!stacks.has(stackName)) stacks.set(stackName, []);
+          stacks.get(stackName).push(nb);
+        } else {
+          topNotebooks.push(nb);
+        }
+      });
+
+      let html = `
+        <div class="section-heading" style="padding:4px 8px;margin:0;">
+          <span>スタック &amp; ノートブック</span>
+          <button type="button" id="popover-create-nb-btn" class="btn-icon" style="padding:2px;" title="新規作成">＋</button>
+        </div>
+        <button type="button" class="tree-row${state.activeFilter === 'unclassified' ? ' active' : ''}" data-pop-filter="unclassified" style="width:100%;">
+          <span class="truncate">📥 未分類 (インボックス)</span>
+          <span style="font-size:11px;color:var(--text-faint);">${unclassifiedCount}</span>
+        </button>
+      `;
+
+      stacks.forEach((children, stackName) => {
+        const totalInStack = children.reduce((sum, c) => sum + (countByNb.get(c) || 0), 0);
+        html += `
+          <button type="button" class="tree-row${state.activeFilter === `stack:${stackName}` ? ' active' : ''}" data-pop-filter="stack:${escapeHtml(stackName)}" style="width:100%;">
+            <span class="truncate">🗂️ ${escapeHtml(stackName)}</span>
+            <span style="font-size:11px;color:var(--text-faint);">${totalInStack}</span>
+          </button>
+        `;
+        children.forEach(fullNb => {
+          const shortName = fullNb.split('/').slice(1).join('/');
+          html += `
+            <button type="button" class="tree-row indented${state.activeFilter === `nb:${fullNb}` ? ' active' : ''}" data-pop-filter="nb:${escapeHtml(fullNb)}" style="width:100%;">
+              <span class="truncate">📓 ${escapeHtml(shortName)}</span>
+              <span style="font-size:11px;color:var(--text-faint);">${countByNb.get(fullNb) || 0}</span>
+            </button>
+          `;
+        });
+      });
+
+      topNotebooks.forEach(nb => {
+        if (stacks.has(nb)) return;
+        html += `
+          <button type="button" class="tree-row${state.activeFilter === `nb:${nb}` ? ' active' : ''}" data-pop-filter="nb:${escapeHtml(nb)}" style="width:100%;">
+            <span class="truncate">📓 ${escapeHtml(nb)}</span>
+            <span style="font-size:11px;color:var(--text-faint);">${countByNb.get(nb) || 0}</span>
+          </button>
+        `;
+      });
+
+      html += `
+        <button type="button" class="tree-row${state.activeFilter === 'trash' ? ' active' : ''}" data-pop-filter="trash" style="width:100%;margin-top:6px;border-top:1px solid var(--border);padding-top:6px;">
+          <span class="truncate">🗑️ ゴミ箱</span>
+          <span style="font-size:11px;color:var(--text-faint);">${trashedNotes.length}</span>
+        </button>
+      `;
+
+      el.railNotebooksPopover.innerHTML = html;
+      el.railNotebooksPopover.querySelectorAll('[data-pop-filter]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          setActiveFilter(btn.dataset.popFilter);
+          closeRailNotebooksPopover();
+        });
+      });
+      el.railNotebooksPopover.querySelector('#popover-create-nb-btn')?.addEventListener('click', () => {
+        closeRailNotebooksPopover();
+        openCreateNotebookModal();
+      });
+    }
+
+    function toggleRailNotebooksPopover() {
+      if (!el.railNotebooksPopover) return;
+      const isHidden = el.railNotebooksPopover.classList.contains('hidden');
+      if (!isHidden) {
+        closeRailNotebooksPopover();
+        return;
+      }
+      renderRailNotebooksPopover();
+      const rect = el.railNotebooksBtn?.getBoundingClientRect();
+      if (rect) {
+        el.railNotebooksPopover.style.left = `${rect.right + 8}px`;
+        el.railNotebooksPopover.style.top = `${Math.max(12, Math.min(window.innerHeight - 320, rect.top))}px`;
+      }
+      el.railNotebooksPopover.classList.remove('hidden');
+    }
+
+    function setSidebarCollapsed(collapsed) {
+      const shouldCollapse = Boolean(collapsed) && !isMobileViewport();
+      el.leftSidebar.classList.toggle('collapsed', shouldCollapse);
+      if (!shouldCollapse) closeRailNotebooksPopover();
+      safeStorage.setItem(LS_SIDEBAR_COLLAPSED_KEY, String(Boolean(collapsed)));
+      syncSidebarRailState();
+    }
+
+    function syncSidebarRailState() {
+      if (!el.sidebarRail) return;
+
+      el.railPinnedBtn.classList.toggle('active', state.activeFilter === 'pinned');
+      el.railNotesBtn.classList.toggle('active', state.activeFilter === 'all');
+      const isNotebookFilter = state.activeFilter === 'unclassified' ||
+        state.activeFilter === 'trash' ||
+        state.activeFilter.startsWith('nb:') ||
+        state.activeFilter.startsWith('stack:');
+      el.railNotebooksBtn.classList.toggle('active', isNotebookFilter);
+
+      const connected = isGdriveConnected();
+      const dirtyCount = state.notes.filter(n => n.syncStatus === 'dirty' || (!n.trashed && n.syncStatus === 'local_only')).length;
+
+      el.railCloudBtn.classList.toggle('connected', connected);
+      el.railCloudBtn.title = connected
+        ? `Googleドライブ接続済み (${state.gdriveFolderName})`
+        : (state.gdriveClientId ? 'Googleドライブに再接続' : 'Googleドライブに接続');
+
+      el.railUploadBtn.classList.toggle('disconnected-dim', !connected);
+      el.railDownloadBtn.classList.toggle('disconnected-dim', !connected);
+      el.railUploadBtn.disabled = state.isGdriveSyncing;
+      el.railDownloadBtn.disabled = state.isGdriveSyncing;
+
+      el.railUploadBadge.textContent = String(dirtyCount);
+      el.railUploadBadge.classList.toggle('hidden', dirtyCount === 0);
+
+      const isDark = document.documentElement.classList.contains('dark');
+      el.railThemeIconSun.classList.toggle('hidden', !isDark);
+      el.railThemeIconMoon.classList.toggle('hidden', isDark);
+    }
+
+    function bindSidebarCollapseEvents() {
+      const savedCollapsed = safeStorage.getItem(LS_SIDEBAR_COLLAPSED_KEY) === 'true';
+      setSidebarCollapsed(savedCollapsed);
+
+      const origRenderSidebar = renderSidebar;
+      renderSidebar = function (...args) {
+        origRenderSidebar.apply(this, args);
+        syncSidebarRailState();
+      };
+      const origUpdateGdriveStatusUI = updateGdriveStatusUI;
+      updateGdriveStatusUI = function (...args) {
+        origUpdateGdriveStatusUI.apply(this, args);
+        syncSidebarRailState();
+      };
+      const origApplyTheme = applyTheme;
+      applyTheme = function (...args) {
+        origApplyTheme.apply(this, args);
+        syncSidebarRailState();
+      };
+
+      // 収納・展開スイッチ
+      el.collapseSidebarBtn.addEventListener('click', () => setSidebarCollapsed(true));
+      el.railExpandBtn.addEventListener('click', () => setSidebarCollapsed(false));
+
+      // ピン・すべてのノート・ノートブック一覧（ノートブック一覧押下でポップオーバー表示）
+      el.railPinnedBtn.addEventListener('click', () => {
+        closeRailNotebooksPopover();
+        setActiveFilter('pinned');
+      });
+      el.railNotesBtn.addEventListener('click', () => {
+        closeRailNotebooksPopover();
+        setActiveFilter('all');
+      });
+      el.railNotebooksBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        toggleRailNotebooksPopover();
+      });
+
+      // メニュー外側クリック・ESCキーで閉じる
+      document.addEventListener('click', (e) => {
+        if (el.railNotebooksPopover && !el.railNotebooksPopover.classList.contains('hidden')) {
+          if (!el.railNotebooksPopover.contains(e.target) && !el.railNotebooksBtn?.contains(e.target)) {
+            closeRailNotebooksPopover();
+          }
+        }
+      });
+      window.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') closeRailNotebooksPopover();
+      });
+
+      // クラウド・アップロード・ダウンロード・歯車
+      el.railCloudBtn.addEventListener('click', () => el.connectGdriveBtn.click());
+      el.railUploadBtn.addEventListener('click', async () => {
+        if (!isGdriveConnected()) {
+          const ok = await connectGoogleDriveOnly(state.gdriveClientId ? '' : 'consent');
+          if (!ok) return;
+        }
+        uploadChangesToGoogleDrive();
+      });
+      el.railDownloadBtn.addEventListener('click', async () => {
+        if (!isGdriveConnected()) {
+          const ok = await connectGoogleDriveOnly(state.gdriveClientId ? '' : 'consent');
+          if (!ok) return;
+        }
+        downloadChangesFromGoogleDrive(false);
+      });
+      el.railSettingsBtn.addEventListener('click', () => el.gdriveSettingsBtn.click());
+
+      // .enex読み込み・ダークモード切替・一覧ヘッダーの新規作成ボタン
+      el.railImportBtn.addEventListener('click', () => el.importEnexBtn.click());
+      el.railThemeBtn.addEventListener('click', () => el.themeToggleBtn.click());
+      el.listNewNoteBtn.addEventListener('click', () => createBlankNote(''));
+
+      // 画面リサイズ時の追従
+      window.addEventListener('resize', () => {
+        closeRailNotebooksPopover();
+        if (isMobileViewport()) {
+          el.leftSidebar.classList.remove('collapsed');
+        } else if (safeStorage.getItem(LS_SIDEBAR_COLLAPSED_KEY) === 'true') {
+          el.leftSidebar.classList.add('collapsed');
+          syncSidebarRailState();
+        }
+      }, { passive: true });
+
+      syncSidebarRailState();
+    }
+    
     initApp();
   </script>
 
