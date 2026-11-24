@@ -1984,14 +1984,14 @@
       }
     }
 
-    async function enforceLruBodyCacheLimit() {
-      const maxCached = getMaxLruCachedNotes();
-      const cachedCloudNotes = state.notes
+    function getEvictableCachedCloudNotes() {
+      return state.notes
         .filter(n => n.bodyCached && n.gdriveFileId && n.syncStatus === 'synced' && n.id !== state.activeNoteId)
         .sort((a, b) => (b.lastAccessedAt || 0) - (a.lastAccessedAt || 0));
+    }
 
-      if (cachedCloudNotes.length <= maxCached) return 0;
-      const toEvict = cachedCloudNotes.slice(maxCached);
+    async function evictCachedBodies(toEvict) {
+      if (toEvict.length === 0) return 0;
       try {
         const db = await openAppDB();
         await new Promise((resolve) => {
@@ -2017,37 +2017,13 @@
       return toEvict.length;
     }
 
+    async function enforceLruBodyCacheLimit() {
+      const cachedCloudNotes = getEvictableCachedCloudNotes();
+      return evictCachedBodies(cachedCloudNotes.slice(getMaxLruCachedNotes()));
+    }
+
     async function clearAllCachedBodiesExceptDirty() {
-      let cleared = 0;
-      try {
-        const db = await openAppDB();
-        await new Promise((resolve) => {
-          const tx = db.transaction([META_STORE, BODY_STORE], 'readwrite');
-          const metaStore = tx.objectStore(META_STORE);
-          const bodyStore = tx.objectStore(BODY_STORE);
-          for (const n of state.notes) {
-            if (n.bodyCached && n.gdriveFileId && n.syncStatus === 'synced' && n.id !== state.activeNoteId) {
-              n.bodyCached = false;
-              fallbackBodyStore.delete(n.id);
-              metaStore.put(n);
-              bodyStore.delete(n.id);
-              cleared++;
-            }
-          }
-          tx.oncomplete = () => resolve();
-          tx.onerror = () => resolve();
-        });
-      } catch {
-        for (const n of state.notes) {
-          if (n.bodyCached && n.gdriveFileId && n.syncStatus === 'synced' && n.id !== state.activeNoteId) {
-            n.bodyCached = false;
-            fallbackBodyStore.delete(n.id);
-            cleared++;
-          }
-        }
-      }
-      updateLruStatusBadge();
-      return cleared;
+      return evictCachedBodies(getEvictableCachedCloudNotes());
     }
 
     async function deleteNoteFromDB(id) {
@@ -2386,6 +2362,15 @@
       return chain;
     }
 
+    async function moveGdriveFileParent(fileId, addParentId, removeParents = '', metadata = {}) {
+      const removeParam = removeParents ? `&removeParents=${encodeURIComponent(removeParents)}` : '';
+      await gdriveFetch(`https://www.googleapis.com/drive/v3/files/${fileId}?addParents=${encodeURIComponent(addParentId)}${removeParam}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(metadata)
+      });
+    }
+
     async function evacuateAndCleanupOldGdriveFolder(oldFolderPath) {
       if (!oldFolderPath || !isGdriveConnected()) return;
       try {
@@ -2407,11 +2392,7 @@
                 ? await ensureGdriveFolderForNotebook(matchedNote.notebook || '')
                 : state.gdriveRootFolderId;
               if (destFolderId && destFolderId !== item.folderId) {
-                await gdriveFetch(`https://www.googleapis.com/drive/v3/files/${child.id}?addParents=${encodeURIComponent(destFolderId)}&removeParents=${encodeURIComponent(item.folderId)}`, {
-                  method: 'PATCH',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({})
-                });
+                await moveGdriveFileParent(child.id, destFolderId, item.folderId);
               }
             }
           }
@@ -2502,10 +2483,8 @@
             const info = await infoRes.json();
             const oldParents = (info.parents || []).filter(p => p !== destFolderId).join(',');
             if (!(info.parents || []).includes(destFolderId)) {
-              await gdriveFetch(`https://www.googleapis.com/drive/v3/files/${meta.gdriveFileId}?addParents=${encodeURIComponent(destFolderId)}${oldParents ? `&removeParents=${encodeURIComponent(oldParents)}` : ''}`, {
-                method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name: `${sanitizeFilename(meta.title)}__${meta.id}.html` })
+              await moveGdriveFileParent(meta.gdriveFileId, destFolderId, oldParents, {
+                name: `${sanitizeFilename(meta.title)}__${meta.id}.html`
               });
             }
           }
@@ -2693,6 +2672,10 @@
       return pathById;
     }
 
+    function getPendingUploadNotes() {
+      return state.notes.filter(n => n.syncStatus === 'dirty' || (!n.trashed && n.syncStatus === 'local_only'));
+    }
+
     async function connectGoogleDriveOnly(promptMode = '') {
       if (!state.gdriveClientId) { openGdriveSettingsModal(); return false; }
       if (state.isGdriveSyncing) { showToast('現在Googleドライブ処理中です', 'info'); return false; }
@@ -2706,7 +2689,7 @@
         await ensureValidGdriveToken(promptMode);
         setSyncProgress(true, `保存先フォルダ「${state.gdriveFolderName}」を確認中...`, 75);
         state.gdriveRootFolderId = await findOrCreateGdriveFolder(state.gdriveFolderName, null);
-        const dirtyCount = state.notes.filter(n => n.syncStatus === 'dirty' || (!n.trashed && n.syncStatus === 'local_only')).length;
+        const dirtyCount = getPendingUploadNotes().length;
         const hint = dirtyCount > 0
           ? `（未送信 ${dirtyCount}件あり：「⬆️ 送信」または「⬇️ 受信」を選択してください）`
           : '（「⬆️ 送信」または「⬇️ 受信」で手動同期できます）';
@@ -2743,7 +2726,7 @@ async function uploadChangesToGoogleDrive() {
 
         await flushPendingGdriveTrashIds();
 
-        const dirtyNotes = state.notes.filter(n => n.syncStatus === 'dirty' || (!n.trashed && n.syncStatus === 'local_only'));
+        const dirtyNotes = getPendingUploadNotes();
         if (dirtyNotes.length === 0) {
           await flushPendingGdriveFolderCleanups();
           showToast('送信すべき端末側の変更はありません', 'info');
@@ -2864,6 +2847,27 @@ async function uploadChangesToGoogleDrive() {
       return 'downloaded';
     }
 
+    async function handleRemoteDeletedNoteAtIndex(noteIndex) {
+      const targetNote = state.notes[noteIndex];
+      if (!targetNote) return false;
+      if (targetNote.syncStatus === 'dirty') {
+        targetNote.gdriveFileId = null;
+        targetNote.gdriveMd5 = null;
+        targetNote.syncStatus = 'local_only';
+        await saveNoteMetaAndBodyToDB(targetNote, null, true);
+        return false;
+      }
+      const removedId = targetNote.id;
+      await deleteNoteFromDB(removedId);
+      state.notes.splice(noteIndex, 1);
+      if (state.activeNoteId === removedId) {
+        state.activeNoteId = null;
+        state.activeNoteContentId = null;
+        showEmptyEditor();
+      }
+      return true;
+    }
+
     async function downloadChangesFromGoogleDrive(forceFullScan = false) {
       if (!state.gdriveClientId) { openGdriveSettingsModal(); return; }
       if (state.isGdriveSyncing) { showToast('現在Googleドライブと同期中です', 'info'); return; }
@@ -2915,22 +2919,7 @@ async function uploadChangesToGoogleDrive() {
           for (let i = state.notes.length - 1; i >= 0; i--) {
             const localNote = state.notes[i];
             if (!localNote.gdriveFileId || remoteFileIds.has(localNote.gdriveFileId)) continue;
-            if (localNote.syncStatus === 'dirty') {
-              localNote.gdriveFileId = null;
-              localNote.gdriveMd5 = null;
-              localNote.syncStatus = 'local_only';
-              await saveNoteMetaAndBodyToDB(localNote, null, true);
-            } else {
-              const removedId = localNote.id;
-              await deleteNoteFromDB(removedId);
-              state.notes.splice(i, 1);
-              if (state.activeNoteId === removedId) {
-                state.activeNoteId = null;
-                state.activeNoteContentId = null;
-                showEmptyEditor();
-              }
-              deletedCount++;
-            }
+            if (await handleRemoteDeletedNoteAtIndex(i)) deletedCount++;
           }
 
           const toDownload = allRemoteFiles.filter(({ file }) => {
@@ -2996,25 +2985,9 @@ async function uploadChangesToGoogleDrive() {
           const toFetch = [];
           for (const ch of changedItems) {
             const localIdx = state.notes.findIndex(n => n.gdriveFileId === ch.fileId);
-            if (ch.removed || (ch.file && ch.file.trashed)) {
-              if (localIdx !== -1) {
-                const targetNote = state.notes[localIdx];
-                if (targetNote.syncStatus === 'dirty') {
-                  targetNote.gdriveFileId = null;
-                  targetNote.gdriveMd5 = null;
-                  targetNote.syncStatus = 'local_only';
-                  await saveNoteMetaAndBodyToDB(targetNote, null, true);
-                } else {
-                  const removedId = targetNote.id;
-                  await deleteNoteFromDB(removedId);
-                  state.notes.splice(localIdx, 1);
-                  if (state.activeNoteId === removedId) {
-                    state.activeNoteId = null;
-                    state.activeNoteContentId = null;
-                    showEmptyEditor();
-                  }
-                  deletedCount++;
-                }
+             if (ch.removed || (ch.file && ch.file.trashed)) {
+              if (localIdx !== -1 && await handleRemoteDeletedNoteAtIndex(localIdx)) {
+                deletedCount++;
               }
               continue;
             }
@@ -3813,20 +3786,24 @@ async function uploadChangesToGoogleDrive() {
       el.noteRichEditor.querySelectorAll('img.selected-editor-img').forEach(i => i.classList.remove('selected-editor-img'));
     }
 
-    function positionImageFloatingToolbar() {
-      if (!state.activeEditorImg || !document.body.contains(state.activeEditorImg)) {
-        hideImageFloatingToolbar();
+    function positionEditorFloatingBar(targetEl, toolbarEl, maxOffsetRight, onMissing) {
+      if (!targetEl || !document.body.contains(targetEl)) {
+        onMissing();
         return;
       }
-      const rect = state.activeEditorImg.getBoundingClientRect();
+      const rect = targetEl.getBoundingClientRect();
       const editorBox = el.noteRichEditor.parentElement?.getBoundingClientRect();
       if (editorBox && (rect.bottom < editorBox.top || rect.top > editorBox.bottom)) {
-        el.imageFloatingToolbar.classList.add('hidden');
+        toolbarEl.classList.add('hidden');
         return;
       }
-      el.imageFloatingToolbar.style.left = `${Math.max(12, Math.min(window.innerWidth - 260, rect.left))}px`;
-      el.imageFloatingToolbar.style.top = `${Math.max(56, rect.top - 42)}px`;
-      el.imageFloatingToolbar.classList.remove('hidden');
+      toolbarEl.style.left = `${Math.max(12, Math.min(window.innerWidth - maxOffsetRight, rect.left))}px`;
+      toolbarEl.style.top = `${Math.max(56, rect.top - 42)}px`;
+      toolbarEl.classList.remove('hidden');
+    }
+
+    function positionImageFloatingToolbar() {
+      positionEditorFloatingBar(state.activeEditorImg, el.imageFloatingToolbar, 260, hideImageFloatingToolbar);
     }
     
     async function selectNote(noteId, pushHistory = true, notifyIfMissing = false) {
@@ -3922,6 +3899,12 @@ async function uploadChangesToGoogleDrive() {
       applyDarkModeReadabilityFix(el.noteRichEditor);
       updateEditorHeaderMeta(meta);
       updateLruStatusBadge();
+    }
+
+    function closeMobileEditorPane(resetHistoryFlag = true) {
+      el.editorPane.classList.remove('mobile-open');
+      document.querySelector('.workspace')?.classList.remove('mobile-editor-open');
+      if (resetHistoryFlag) state.mobileHistoryPushed = false;
     }
 
     function showEmptyEditor() {
@@ -4279,6 +4262,31 @@ async function uploadChangesToGoogleDrive() {
       `;
     }
 
+    function buildNotebookHierarchyData(activeNotes) {
+      const stacks = new Map();
+      const topNotebooks = [];
+      const countByNb = new Map();
+      activeNotes.forEach(n => {
+        if (!n.notebook) return;
+        countByNb.set(n.notebook, (countByNb.get(n.notebook) || 0) + 1);
+      });
+
+      state.notebooks.forEach(nb => {
+        if (nb.endsWith('/')) {
+          const stackName = nb.slice(0, -1).trim();
+          if (stackName && !stacks.has(stackName)) stacks.set(stackName, []);
+        } else if (nb.includes('/')) {
+          const stackName = nb.split('/')[0].trim();
+          if (!stacks.has(stackName)) stacks.set(stackName, []);
+          stacks.get(stackName).push(nb);
+        } else {
+          topNotebooks.push(nb);
+        }
+      });
+
+      return { stacks, topNotebooks, countByNb };
+    }
+
     function renderSidebar() {
       const activeNotes = state.notes.filter(n => !n.trashed);
       const pinnedNotes = activeNotes.filter(n => n.pinned);
@@ -4312,26 +4320,7 @@ async function uploadChangesToGoogleDrive() {
         });
       });
 
-      const stacks = new Map();
-      const topNotebooks = [];
-      const countByNb = new Map();
-      activeNotes.forEach(n => {
-        if (!n.notebook) return;
-        countByNb.set(n.notebook, (countByNb.get(n.notebook) || 0) + 1);
-      });
-
-      state.notebooks.forEach(nb => {
-        if (nb.endsWith('/')) {
-          const stackName = nb.slice(0, -1).trim();
-          if (stackName && !stacks.has(stackName)) stacks.set(stackName, []);
-        } else if (nb.includes('/')) {
-          const stackName = nb.split('/')[0].trim();
-          if (!stacks.has(stackName)) stacks.set(stackName, []);
-          stacks.get(stackName).push(nb);
-        } else {
-          topNotebooks.push(nb);
-        }
-      });
+      const { stacks, topNotebooks, countByNb } = buildNotebookHierarchyData(activeNotes);
 
       let treeHtml = '';
 
@@ -4487,7 +4476,7 @@ async function uploadChangesToGoogleDrive() {
     function updateGdriveStatusUI() {
       const connected = isGdriveConnected();
       const hasClientId = Boolean(state.gdriveClientId);
-      const dirtyCount = state.notes.filter(n => n.syncStatus === 'dirty' || (!n.trashed && n.syncStatus === 'local_only')).length;
+      const dirtyCount = getPendingUploadNotes().length;
 
       if (el.pendingUploadCountBadge) {
         el.pendingUploadCountBadge.textContent = String(dirtyCount);
@@ -4711,6 +4700,13 @@ async function uploadChangesToGoogleDrive() {
       applyDarkModeReadabilityFix(el.noteRichEditor);
     }
 
+    function syncActiveNotebookSelectorUI() {
+      const meta = getActiveNoteMeta();
+      if (!meta) return;
+      el.noteNotebookSelect.value = meta.notebook || '';
+      el.editCurrentNotebookInlineBtn.classList.toggle('hidden', !meta.notebook);
+    }
+
     async function openCreateNotebookModal() {
       const existingStacks = getAllStackNames();
       const defaultStack = state.activeFilter.startsWith('stack:')
@@ -4783,10 +4779,7 @@ async function uploadChangesToGoogleDrive() {
               }
 
               renderNotebookSelectOptions();
-              if (meta) {
-                el.noteNotebookSelect.value = meta.notebook || '';
-                el.editCurrentNotebookInlineBtn.classList.toggle('hidden', !meta.notebook);
-              }
+              syncActiveNotebookSelectorUI();
               renderSidebar();
               showToast(isStackOnly
                 ? `スタック「${fullPath.slice(0, -1)}」を作成しました`
@@ -4861,10 +4854,7 @@ async function uploadChangesToGoogleDrive() {
 
               const activeMeta = getActiveNoteMeta();
               renderAll();
-              if (activeMeta) {
-                el.noteNotebookSelect.value = activeMeta.notebook || '';
-                el.editCurrentNotebookInlineBtn.classList.toggle('hidden', !activeMeta.notebook);
-              }
+              syncActiveNotebookSelectorUI();
               await syncFolderMigrationToGdrive([targetNotebook], movedIds);
               showToast(`「${nextFullPath}」へ変更しました（対象ノート ${movedIds.length} 件）`, 'success');
             }
@@ -4928,11 +4918,7 @@ async function uploadChangesToGoogleDrive() {
       }
 
       renderAll();
-      const activeMeta = getActiveNoteMeta();
-      if (activeMeta) {
-        el.noteNotebookSelect.value = activeMeta.notebook || '';
-        el.editCurrentNotebookInlineBtn.classList.toggle('hidden', !activeMeta.notebook);
-      }
+      syncActiveNotebookSelectorUI();
       await syncFolderMigrationToGdrive(Array.from(oldPaths), affectedIds);
       return affectedIds.length;
     }
@@ -5001,11 +4987,7 @@ async function uploadChangesToGoogleDrive() {
       } else {
         renderAll();
       }
-      const activeMeta = getActiveNoteMeta();
-      if (activeMeta) {
-        el.noteNotebookSelect.value = activeMeta.notebook || '';
-        el.editCurrentNotebookInlineBtn.classList.toggle('hidden', !activeMeta.notebook);
-      }
+      syncActiveNotebookSelectorUI();
       await syncFolderMigrationToGdrive([targetNotebook], affectedIds);
       showToast(`ノートブック「${targetNotebook}」を削除しました`, 'info');
     }
@@ -5029,6 +5011,13 @@ async function uploadChangesToGoogleDrive() {
     }
     
     function bindEvents() {
+      const moveNoteToTrash = async (noteMeta) => {
+        noteMeta.trashed = true;
+        noteMeta.syncStatus = isGdriveConnected() ? 'synced' : 'dirty';
+        await trashOrDeleteGdriveFile(noteMeta.gdriveFileId);
+        await saveNoteMetaAndBodyToDB(noteMeta, null, true);
+      };
+
       const normalizeInternalLinks = () => {
         el.noteRichEditor.querySelectorAll('a').forEach(a => {
           const href = a.getAttribute('href') || '';
@@ -5220,10 +5209,7 @@ async function uploadChangesToGoogleDrive() {
               await deleteNoteFromDB(n.id);
               state.notes = state.notes.filter(x => x.id !== id);
             } else {
-              n.trashed = true;
-              n.syncStatus = isGdriveConnected() ? 'synced' : 'dirty';
-              await trashOrDeleteGdriveFile(n.gdriveFileId);
-              await saveNoteMetaAndBodyToDB(n, null, true);
+              await moveNoteToTrash(n);
             }
           }
         }
@@ -5257,8 +5243,7 @@ async function uploadChangesToGoogleDrive() {
       });
 
       el.mobileBackBtn.addEventListener('click', () => {
-        el.editorPane.classList.remove('mobile-open');
-        document.querySelector('.workspace')?.classList.remove('mobile-editor-open');
+        closeMobileEditorPane(false);
         if (state.mobileHistoryPushed) {
           state.mobileHistoryPushed = false;
           try { window.history.back(); } catch {}
@@ -5266,11 +5251,11 @@ async function uploadChangesToGoogleDrive() {
       });
       window.addEventListener('popstate', () => {
         if (isMobileViewport() && el.editorPane.classList.contains('mobile-open')) {
-          el.editorPane.classList.remove('mobile-open');
-          document.querySelector('.workspace')?.classList.remove('mobile-editor-open');
-          state.mobileHistoryPushed = false;
+          closeMobileEditorPane(true);
         }
       });
+
+
       el.navBackNoteBtn.addEventListener('click', () => {
         const prevId = state.noteHistory.pop();
         if (prevId) selectNote(prevId, false, true);
@@ -5303,10 +5288,7 @@ async function uploadChangesToGoogleDrive() {
       el.deleteNoteBtn.addEventListener('click', async () => {
         const meta = getActiveNoteMeta();
         if (!meta) return;
-        meta.trashed = true;
-        meta.syncStatus = isGdriveConnected() ? 'synced' : 'dirty';
-        await trashOrDeleteGdriveFile(meta.gdriveFileId);
-        await saveNoteMetaAndBodyToDB(meta, null, true);
+        await moveNoteToTrash(meta);
         updatePinAndTrashUI(meta);
         rebuildNotebooksFromNotes();
         renderAll();
@@ -5854,19 +5836,7 @@ async function uploadChangesToGoogleDrive() {
     }
 
     function positionLinkFloatingToolbar() {
-      if (!activeEditorExternalLink || !document.body.contains(activeEditorExternalLink)) {
-        hideLinkFloatingToolbar();
-        return;
-      }
-      const rect = activeEditorExternalLink.getBoundingClientRect();
-      const editorBox = el.noteRichEditor.parentElement?.getBoundingClientRect();
-      if (editorBox && (rect.bottom < editorBox.top || rect.top > editorBox.bottom)) {
-        el.linkFloatingToolbar.classList.add('hidden');
-        return;
-      }
-      el.linkFloatingToolbar.style.left = `${Math.max(12, Math.min(window.innerWidth - 240, rect.left))}px`;
-      el.linkFloatingToolbar.style.top = `${Math.max(56, rect.top - 42)}px`;
-      el.linkFloatingToolbar.classList.remove('hidden');
+      positionEditorFloatingBar(activeEditorExternalLink, el.linkFloatingToolbar, 240, hideLinkFloatingToolbar);
     }
 
     function showLinkFloatingToolbar(anchorEl) {
@@ -6046,26 +6016,7 @@ async function uploadChangesToGoogleDrive() {
       const trashedNotes = state.notes.filter(n => n.trashed);
       const unclassifiedCount = activeNotes.filter(n => !n.notebook).length;
 
-      const stacks = new Map();
-      const topNotebooks = [];
-      const countByNb = new Map();
-      activeNotes.forEach(n => {
-        if (!n.notebook) return;
-        countByNb.set(n.notebook, (countByNb.get(n.notebook) || 0) + 1);
-      });
-
-      state.notebooks.forEach(nb => {
-        if (nb.endsWith('/')) {
-          const stackName = nb.slice(0, -1).trim();
-          if (stackName && !stacks.has(stackName)) stacks.set(stackName, []);
-        } else if (nb.includes('/')) {
-          const stackName = nb.split('/')[0].trim();
-          if (!stacks.has(stackName)) stacks.set(stackName, []);
-          stacks.get(stackName).push(nb);
-        } else {
-          topNotebooks.push(nb);
-        }
-      });
+      const { stacks, topNotebooks, countByNb } = buildNotebookHierarchyData(activeNotes);
 
       let html = `
         <div class="section-heading" style="padding:4px 8px;margin:0;">
@@ -6166,7 +6117,7 @@ async function uploadChangesToGoogleDrive() {
       el.railNotebooksBtn.classList.toggle('active', isNotebookFilter);
 
       const connected = isGdriveConnected();
-      const dirtyCount = state.notes.filter(n => n.syncStatus === 'dirty' || (!n.trashed && n.syncStatus === 'local_only')).length;
+      const dirtyCount = getPendingUploadNotes().length;
 
       el.railCloudBtn.classList.toggle('connected', connected);
       el.railCloudBtn.title = connected
@@ -6237,21 +6188,16 @@ async function uploadChangesToGoogleDrive() {
       });
 
       // クラウド・アップロード・ダウンロード・歯車
+      const runWithGdriveConnection = async (actionFn) => {
+        if (!isGdriveConnected()) {
+          const ok = await connectGoogleDriveOnly(state.gdriveClientId ? '' : 'consent');
+          if (!ok) return;
+        }
+        actionFn();
+      };
       el.railCloudBtn.addEventListener('click', () => el.connectGdriveBtn.click());
-      el.railUploadBtn.addEventListener('click', async () => {
-        if (!isGdriveConnected()) {
-          const ok = await connectGoogleDriveOnly(state.gdriveClientId ? '' : 'consent');
-          if (!ok) return;
-        }
-        uploadChangesToGoogleDrive();
-      });
-      el.railDownloadBtn.addEventListener('click', async () => {
-        if (!isGdriveConnected()) {
-          const ok = await connectGoogleDriveOnly(state.gdriveClientId ? '' : 'consent');
-          if (!ok) return;
-        }
-        downloadChangesFromGoogleDrive(false);
-      });
+      el.railUploadBtn.addEventListener('click', () => runWithGdriveConnection(uploadChangesToGoogleDrive));
+      el.railDownloadBtn.addEventListener('click', () => runWithGdriveConnection(() => downloadChangesFromGoogleDrive(false)));
       el.railSettingsBtn.addEventListener('click', () => el.gdriveSettingsBtn.click());
 
       // .enex読み込み・ダークモード切替・一覧ヘッダーの新規作成ボタン
