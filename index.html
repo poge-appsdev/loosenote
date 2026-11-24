@@ -739,6 +739,54 @@
       .lg-hidden { display: none !important; }
       .list-pane { width: 368px; }
     }
+
+ /* チェックボックス（ToDoリスト） */
+ #note-rich-editor .todo-item {
+   display: flex;
+   align-items: flex-start;
+   gap: 8px;
+   margin: 4px 0;
+   line-height: 1.6;
+ }
+ #note-rich-editor .todo-checkbox {
+   appearance: none;
+   -webkit-appearance: none;
+   width: 16px;
+   height: 16px;
+   margin: 4px 0 0 0;
+   flex-shrink: 0;
+   border: 1.5px solid var(--text-sub, #64748b);
+   border-radius: 3px;
+   background: transparent;
+   cursor: pointer;
+   position: relative;
+ }
+ #note-rich-editor .todo-checkbox:checked {
+   background: var(--brand, #10b981);
+   border-color: var(--brand, #10b981);
+ }
+ #note-rich-editor .todo-checkbox:checked::after {
+   content: "";
+   position: absolute;
+   left: 4px;
+   top: 1px;
+   width: 4px;
+   height: 8px;
+   border: solid #ffffff;
+   border-width: 0 2px 2px 0;
+   transform: rotate(45deg);
+ }
+ #note-rich-editor .todo-text {
+   flex: 1;
+   min-width: 0;
+   word-break: break-word;
+ }
+ #note-rich-editor .todo-item.is-checked .todo-text,
+ #note-rich-editor .todo-item:has(.todo-checkbox:checked) .todo-text {
+   text-decoration: line-through;
+   color: var(--text-faint, #94a3b8);
+ }
+
   </style>
 </head>
 <body>
@@ -1089,7 +1137,7 @@
         <!-- ツールバー -->
         <div id="editor-toolbar" class="editor-toolbar">
           <button type="button" data-cmd="bold" class="toolbar-btn btn" style="padding:4px 8px;font-weight:700;color:var(--text-sub);">B</button>
-          <button type="button" id="insert-checkbox-btn" class="btn" style="padding:4px 8px;color:var(--text-sub);">☑ ToDo</button>
+          <button type="button" id="insert-checkbox-btn" class="toolbar-btn" title="チェックボックスを挿入">☑</button>
           <button type="button" id="insert-table-btn" class="btn" style="padding:4px 8px;color:var(--text-sub);" title="3×3の表を挿入">📊 表</button>
           <span class="toolbar-sep"></span>
           <button type="button" id="embed-media-btn" class="btn badge-brand" style="padding:4px 10px;">
@@ -1143,6 +1191,7 @@
   </div>
 
   <script>
+
     /**
      * ==========================================================================
      * LooseNote Cloud - 監査済み・最終安定運用版
@@ -4250,12 +4299,7 @@ async function uploadChangesToGoogleDrive() {
         }
       });
 
-      let treeHtml = `
-        <button type="button" class="tree-row${state.activeFilter === 'unclassified' ? ' active' : ''}" data-nb-filter="unclassified" style="width:100%;">
-          <span class="truncate">📥 未分類 (インボックス)</span>
-          <span style="font-size:11px;color:var(--text-faint);">${unclassifiedCount}</span>
-        </button>
-      `;
+      let treeHtml = '';
 
       stacks.forEach((children, stackName) => {
         const isCollapsed = !state.expandedStacks.has(stackName);
@@ -4285,6 +4329,13 @@ async function uploadChangesToGoogleDrive() {
         if (stacks.has(nb)) return;
         treeHtml += renderNotebookRowHtml(nb, nb, countByNb.get(nb) || 0, false);
       });
+
+      treeHtml += `
+        <button type="button" class="tree-row${state.activeFilter === 'unclassified' ? ' active' : ''}" data-nb-filter="unclassified" style="width:100%;">
+          <span class="truncate">📥 未分類 (インボックス)</span>
+          <span style="font-size:11px;color:var(--text-faint);">${unclassifiedCount}</span>
+        </button>
+      `;
 
       treeHtml += `
         <button type="button" class="tree-row${state.activeFilter === 'trash' ? ' active' : ''}" data-nb-filter="trash" style="width:100%;margin-top:8px;border-top:1px solid var(--border);padding-top:8px;">
@@ -5260,12 +5311,38 @@ async function uploadChangesToGoogleDrive() {
         });
       });
 
-      el.insertCheckboxBtn.addEventListener('click', () => {
-        const div = document.createElement('div');
-        div.innerHTML = `<label style="display:inline-flex;align-items:center;gap:6px;"><input type="checkbox"> <span>ToDo項目</span></label>`;
-        insertNodeAtEditorCursor(div);
-        scheduleSaveActiveNote();
-      });
+      const createTodoItemElement = (initialHtml = '<br>') => {
+         const item = document.createElement('div');
+         item.className = 'todo-item';
+         const cb = document.createElement('input');
+         cb.type = 'checkbox';
+         cb.className = 'todo-checkbox';
+         cb.setAttribute('contenteditable', 'false');
+         const textSpan = document.createElement('span');
+         textSpan.className = 'todo-text';
+         textSpan.innerHTML = initialHtml || '<br>';
+         item.appendChild(cb);
+         item.appendChild(textSpan);
+         return item;
+       };
+
+       const focusTodoTextStart = (todoItem) => {
+         const textSpan = todoItem.querySelector('.todo-text');
+         if (!textSpan) return;
+         const sel = window.getSelection();
+         const range = document.createRange();
+         range.setStart(textSpan, 0);
+         range.collapse(true);
+         sel.removeAllRanges();
+         sel.addRange(range);
+       };
+
+       el.insertCheckboxBtn.addEventListener('click', () => {
+         const item = createTodoItemElement('<br>');
+         insertNodeAtEditorCursor(item);
+         focusTodoTextStart(item);
+         scheduleSaveActiveNote();
+       });
 
       el.insertTableBtn.addEventListener('click', () => {
         const tbl = document.createElement('table');
@@ -5350,9 +5427,60 @@ async function uploadChangesToGoogleDrive() {
 
       el.noteRichEditor.addEventListener('change', (e) => {
         if (e.target && e.target.matches('input[type="checkbox"]')) {
+           // 保存時のHTMLにチェック状態を確実に残すため属性を同期
+           e.target.toggleAttribute('checked', e.target.checked);
+           const todoItem = e.target.closest('.todo-item');
+           if (todoItem) {
+             todoItem.classList.toggle('is-checked', e.target.checked);
+           }
           scheduleSaveActiveNote();
         }
       });
+
+      el.noteRichEditor.addEventListener('keydown', (e) => {
+         if (e.key !== 'Enter' || e.isComposing) return;
+         const sel = window.getSelection();
+         if (!sel || sel.rangeCount === 0) return;
+         const anchorEl = sel.anchorNode.nodeType === Node.ELEMENT_NODE
+           ? sel.anchorNode
+           : sel.anchorNode.parentElement;
+         const currentTodo = anchorEl?.closest('.todo-item');
+         if (!currentTodo || !el.noteRichEditor.contains(currentTodo)) return;
+
+         e.preventDefault();
+         const textSpan = currentTodo.querySelector('.todo-text');
+
+         // 空のチェックボックス行でEnterを押した場合は通常行に戻してリストを抜ける
+         if (!textSpan || textSpan.textContent.replace(/\u200B/g, '').trim() === '') {
+           const normalLine = document.createElement('div');
+           normalLine.innerHTML = '<br>';
+           currentTodo.replaceWith(normalLine);
+           const range = document.createRange();
+           range.setStart(normalLine, 0);
+           range.collapse(true);
+           sel.removeAllRanges();
+           sel.addRange(range);
+           scheduleSaveActiveNote();
+           return;
+         }
+
+         // カーソル位置以降のテキストを次のチェックボックス行へ送る
+         const range = sel.getRangeAt(0);
+         const afterRange = document.createRange();
+         afterRange.setStart(range.endContainer, range.endOffset);
+         afterRange.setEnd(textSpan, textSpan.childNodes.length);
+         const trailingFragment = afterRange.extractContents();
+ 
+         const tempDiv = document.createElement('div');
+         tempDiv.appendChild(trailingFragment);
+         const nextHtml = tempDiv.innerHTML.trim() ? tempDiv.innerHTML : '<br>';
+         if (!textSpan.innerHTML.trim()) textSpan.innerHTML = '<br>';
+
+         const nextTodo = createTodoItemElement(nextHtml);
+         currentTodo.after(nextTodo);
+         focusTodoTextStart(nextTodo);
+         scheduleSaveActiveNote();
+       });
 
       el.noteRichEditor.addEventListener('click', (e) => {
         const editCardBtn = e.target.closest('.loosenote-edit-link-card-btn');
@@ -5805,10 +5933,6 @@ async function uploadChangesToGoogleDrive() {
           <span>スタック &amp; ノートブック</span>
           <button type="button" id="popover-create-nb-btn" class="btn-icon" style="padding:2px;" title="新規作成">＋</button>
         </div>
-        <button type="button" class="tree-row${state.activeFilter === 'unclassified' ? ' active' : ''}" data-pop-filter="unclassified" style="width:100%;">
-          <span class="truncate">📥 未分類 (インボックス)</span>
-          <span style="font-size:11px;color:var(--text-faint);">${unclassifiedCount}</span>
-        </button>
       `;
 
       stacks.forEach((children, stackName) => {
@@ -5839,6 +5963,13 @@ async function uploadChangesToGoogleDrive() {
           </button>
         `;
       });
+
+      html += `
+        <button type="button" class="tree-row${state.activeFilter === 'unclassified' ? ' active' : ''}" data-pop-filter="unclassified" style="width:100%;">
+          <span class="truncate">📥 未分類 (インボックス)</span>
+          <span style="font-size:11px;color:var(--text-faint);">${unclassifiedCount}</span>
+        </button>
+      `;
 
       html += `
         <button type="button" class="tree-row${state.activeFilter === 'trash' ? ' active' : ''}" data-pop-filter="trash" style="width:100%;margin-top:6px;border-top:1px solid var(--border);padding-top:6px;">
