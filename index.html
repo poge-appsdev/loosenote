@@ -689,6 +689,21 @@
     .wiki-link-item:hover, .wiki-link-item.active {
       background: var(--brand-50); color: var(--brand-700);
     }
+    .toolbar-select {
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-sub);
+      background: var(--bg-muted);
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      padding: 3px 6px;
+      outline: none;
+      cursor: pointer;
+      max-width: 120px;
+    }
+    .toolbar-select:hover, .toolbar-select:focus {
+      border-color: var(--brand-500);
+    }
     .toolbar-sep { width: 1px; height: 16px; background: var(--border-strong); margin: 0 2px; flex-shrink: 0; }
     .date-edit-btn {
       display: inline-flex; align-items: center; gap: 3px; color: var(--text-faint);
@@ -1137,6 +1152,23 @@
         <!-- ツールバー -->
         <div id="editor-toolbar" class="editor-toolbar">
           <button type="button" data-cmd="bold" class="toolbar-btn btn" style="padding:4px 8px;font-weight:700;color:var(--text-sub);">B</button>
+          <select id="font-family-select" class="toolbar-select" title="フォントを変更">
+            <option value="">標準フォント</option>
+            <option value="'Hiragino Kaku Gothic ProN', 'Yu Gothic', 'Meiryo', sans-serif">ゴシック体</option>
+            <option value="'Hiragino Mincho ProN', 'Yu Mincho', 'MS PMincho', serif">明朝体</option>
+            <option value="'Hiragino Maru Gothic ProN', 'UD Digi Kyokasho N-R', sans-serif">丸ゴシック</option>
+            <option value="'Consolas', 'Monaco', 'Courier New', monospace">等幅フォント</option>
+          </select>
+          <select id="font-size-select" class="toolbar-select" title="文字サイズを変更">
+            <option value="12px">12px (極小)</option>
+            <option value="13px">13px (小)</option>
+            <option value="15px" selected>15px (標準)</option>
+            <option value="17px">17px (やや大)</option>
+            <option value="20px">20px (大)</option>
+            <option value="24px">24px (特大)</option>
+            <option value="30px">30px (見出し)</option>
+          </select>
+          <span class="toolbar-sep"></span>
           <button type="button" id="insert-checkbox-btn" class="toolbar-btn" title="チェックボックスを挿入">☑</button>
           <button type="button" id="insert-table-btn" class="btn" style="padding:4px 8px;color:var(--text-sub);" title="3×3の表を挿入">📊 表</button>
           <span class="toolbar-sep"></span>
@@ -1332,6 +1364,8 @@
       downloadSingleHtmlBtn: document.getElementById('download-single-html-btn'),
       deleteNoteBtn: document.getElementById('delete-note-btn'),
       editorToolbar: document.getElementById('editor-toolbar'),
+      fontFamilySelect: document.getElementById('font-family-select'),
+      fontSizeSelect: document.getElementById('font-size-select'),
       insertCheckboxBtn: document.getElementById('insert-checkbox-btn'),
       insertTableBtn: document.getElementById('insert-table-btn'),
       embedMediaBtn: document.getElementById('embed-media-btn'),
@@ -5310,6 +5344,111 @@ async function uploadChangesToGoogleDrive() {
           scheduleSaveActiveNote();
         });
       });
+
+      // フォント種類・文字サイズの変更処理
+      let savedStyleRange = null;
+      const saveCurrentEditorRange = () => {
+        const sel = window.getSelection();
+        if (sel && sel.rangeCount > 0) {
+          const r = sel.getRangeAt(0);
+          if (el.noteRichEditor.contains(r.commonAncestorContainer)) {
+            savedStyleRange = r.cloneRange();
+          }
+        }
+      };
+
+      const applyInlineTextStyle = (styleProp, styleValue) => {
+        el.noteRichEditor.focus();
+        const sel = window.getSelection();
+        if (savedStyleRange && el.noteRichEditor.contains(savedStyleRange.commonAncestorContainer)) {
+          sel.removeAllRanges();
+          sel.addRange(savedStyleRange);
+        }
+        if (!sel || sel.rangeCount === 0) return;
+
+        const range = sel.getRangeAt(0);
+        if (!el.noteRichEditor.contains(range.commonAncestorContainer)) return;
+
+        if (!range.collapsed) {
+          // 選択中のテキストにスタイルを適用
+          document.execCommand('styleWithCSS', false, false);
+          document.execCommand('fontName', false, '__LN_STYLE_TARGET__');
+          const tempFonts = Array.from(el.noteRichEditor.querySelectorAll('font[face="__LN_STYLE_TARGET__"]'));
+          let firstSpan = null;
+          let lastSpan = null;
+          tempFonts.forEach(fontEl => {
+            const span = document.createElement('span');
+            span.style[styleProp] = styleValue;
+            span.innerHTML = fontEl.innerHTML;
+            span.querySelectorAll('span').forEach(childSpan => {
+              if (childSpan.style[styleProp]) childSpan.style[styleProp] = '';
+            });
+            fontEl.replaceWith(span);
+            if (!firstSpan) firstSpan = span;
+            lastSpan = span;
+          });
+          if (firstSpan && lastSpan) {
+            const newRange = document.createRange();
+            newRange.setStartBefore(firstSpan);
+            newRange.setEndAfter(lastSpan);
+            sel.removeAllRanges();
+            sel.addRange(newRange);
+            savedStyleRange = newRange.cloneRange();
+          }
+        } else {
+          // カーソル位置のみの場合は、これから入力する文字にスタイルを適用
+          const parentEl = range.startContainer.nodeType === Node.ELEMENT_NODE
+            ? range.startContainer
+            : range.startContainer.parentElement;
+          const existingSpan = parentEl?.closest('span');
+          if (existingSpan && el.noteRichEditor.contains(existingSpan) && existingSpan.textContent === '\u200B') {
+            existingSpan.style[styleProp] = styleValue;
+          } else {
+            const span = document.createElement('span');
+            span.style[styleProp] = styleValue;
+            span.textContent = '\u200B';
+            range.insertNode(span);
+            const newRange = document.createRange();
+            newRange.setStart(span.firstChild, 1);
+            newRange.collapse(true);
+            sel.removeAllRanges();
+            sel.addRange(newRange);
+            savedStyleRange = newRange.cloneRange();
+          }
+        }
+        scheduleSaveActiveNote();
+      };
+
+      [el.fontFamilySelect, el.fontSizeSelect].forEach(selEl => {
+        selEl.addEventListener('mousedown', saveCurrentEditorRange);
+        selEl.addEventListener('focus', saveCurrentEditorRange);
+      });
+
+      el.fontFamilySelect.addEventListener('change', () => {
+        applyInlineTextStyle('fontFamily', el.fontFamilySelect.value);
+      });
+
+      el.fontSizeSelect.addEventListener('change', () => {
+        applyInlineTextStyle('fontSize', el.fontSizeSelect.value === '15px' ? '' : el.fontSizeSelect.value);
+      });
+
+      // カーソル移動時に現在の文字サイズ・フォントをツールバーへ自動反映
+      document.addEventListener('selectionchange', () => {
+        const sel = window.getSelection();
+        if (!sel || sel.rangeCount === 0) return;
+        const node = sel.anchorNode;
+        const targetEl = node?.nodeType === Node.ELEMENT_NODE ? node : node?.parentElement;
+        if (!targetEl || !el.noteRichEditor.contains(targetEl)) return;
+
+        const computed = window.getComputedStyle(targetEl);
+        const px = `${Math.round(parseFloat(computed.fontSize) || 15)}px`;
+        const hasSizeOpt = Array.from(el.fontSizeSelect.options).some(o => o.value === px);
+        el.fontSizeSelect.value = hasSizeOpt ? px : '15px';
+
+        const styledSpan = targetEl.closest('[style*="font-family"]');
+        el.fontFamilySelect.value = styledSpan ? (styledSpan.style.fontFamily || '') : '';
+      });
+
 
       const createTodoItemElement = (initialHtml = '<br>') => {
          const item = document.createElement('div');
